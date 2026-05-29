@@ -1,0 +1,1251 @@
+测试脚本说明文档（中文）
+
+【当前维护入口】
+项目总体架构已拆分到 PROJECT_PIPELINE_README.md。
+已验证、值得保留的成功改动记录已拆分到 OverViewLog.md。
+本文件保留为历史测试脚本索引和旧维护记录，不再建议继续追加长篇流水账。
+
+项目路径：D:\cst2py_box\Auto_py2cst_v0.71
+适用对象：项目根目录下的 test_*.py 文件。
+用途：帮助开发者或大语言模型快速判断每个测试脚本在测试哪一部分代码、输入输出是什么、什么时候应该运行。
+
+======================================================================
+1. 总览
+======================================================================
+
+根目录当前主要测试脚本：
+
+1. test_clean_parametric_segmentation_validation.py
+   测试 clean_parametric_dataset_50 上的“参数化分段质量”。
+   重点关注 VTracer 语义分段是否接近 GT：分段点、段类型、有效参数量。
+
+2. test_curve_fit_metamaterial_antenna.py
+   测试超材料/天线图像上的图像处理、轮廓提取、曲线拟合与方法对比。
+   覆盖 BSpline、NURBS、OptimizedNURBS、OptimizedBS 等传统/优化拟合方法。
+
+3. test_curve_fit_validation_dataset.py
+   在 validation_dataset 上测试曲线拟合方法。
+   结构参考 test_curve_fit_metamaterial_antenna.py，但面向已有验证集批量样本。
+
+4. test_edge_detect_validation_dataset.py
+   在 validation_dataset 上测试边缘检测方案。
+   对比原始边缘检测、几何感知边缘提取、GT 边缘等。
+
+5. test_vtracer_centerline_system.py
+   Pytest smoke / regression 入口。
+   它本身不实现参数化，而是调用 test_vtracer_validation_dataset.run_batch 快速检查 VTracer 中心线系统是否能跑通。
+
+6. test_vtracer_validation_dataset.py
+   在 validation_dataset 上系统测试 VTracer 中心线参数化。
+   关注骨架中心线、语义分段、line/arc/spline 拟合、SVG 与 metrics 输出。
+
+======================================================================
+2. test_clean_parametric_segmentation_validation.py
+======================================================================
+
+测试对象：
+- vtracer_python.py 中的中心线语义参数化流程。
+- clean_parametric_dataset_50 数据集上的分段准确性。
+- 新增实验分支 optimized_bs_vtracer：先 OptimizedBSplineFitter，再 VTracer 语义分段。
+
+它不是底层算法本体，而是“参数化分段评估器”。
+
+核心流程：
+1. 读取 clean_parametric_dataset_50/summary.json。
+2. 对每个样本读取 image 和 GT JSON。
+3. 构造 TraceConfig。
+4. 调用 VTracerPython.to_svg()。
+5. 从 intermediates/component_xxxx/semantic_debug.json 中读取预测 primitive。
+6. 与 GT 对比：
+   - 分段边界位置是否接近。
+   - line / arc / spline 类型序列是否一致。
+   - effective_params 是否足够简洁。
+7. 输出 clean_parametric_segmentation_report.json。
+8. 可选输出每个样本的 *_segmentation_result.png。
+
+主要测试指标：
+- breakpoints_mae_ratio
+  GT 分段点到预测分段点的归一化平均距离，越小越好。
+
+- breakpoints_count_error
+  分段数量偏差 abs(gt - pred)，越小越好。
+
+- type_lcs_score
+  预测段类型序列与 GT 段类型序列的 LCS 相似度，越大越好。
+
+- effective_params_pred / effective_params_gt
+  预测有效参数量与 GT 启发式有效参数量。
+
+- parsimony_score
+  简洁度分数。
+
+- param_score
+  综合分数：边界 + 类型 + 简洁度。
+
+重要函数：
+- _eval_single()
+  单个样本评估入口。
+
+- run_eval()
+  批量评估入口。
+
+- run_eval_optimized_bs_vtracer()
+  新增实验入口：先 optimized_bs，再把拟合 polyline seed 送入 VTracer。
+
+- diff_segmentation_reports()
+  对比两份已经生成的 report，不重新跑评测。
+
+重要命令：
+
+    D:\Python\python.exe test_clean_parametric_segmentation_validation.py
+
+只跑前 10 个样本，不保存 PNG：
+
+    D:\Python\python.exe test_clean_parametric_segmentation_validation.py --max-samples 10 --no-png
+
+运行新实验流程：
+
+    D:\Python\python.exe test_clean_parametric_segmentation_validation.py --pipeline optimized_bs_vtracer --max-samples 10
+
+对比两份报告：
+
+    D:\Python\python.exe test_clean_parametric_segmentation_validation.py --diff-report baseline.json tuned.json
+
+主要输入：
+- clean_parametric_dataset_50/summary.json
+- clean_parametric_dataset_50/images/*.png
+- clean_parametric_dataset_50/gt/*.json
+
+主要输出：
+- clean_parametric_eval_output/clean_parametric_segmentation_report.json
+- 每个样本的 SVG、metrics、可视化 PNG。
+- optimized_bs_vtracer 分支还会输出 optimized_bs_seed_polyline.npy 和 optimized_bs_seed_meta.json。
+
+======================================================================
+3. test_curve_fit_metamaterial_antenna.py
+======================================================================
+
+测试对象：
+- 超材料/天线结构图像的生成、图像预处理、曲线拟合和多方法对比。
+- 重点覆盖传统拟合与优化拟合方法：
+  - ImageInitializer
+  - BSplineContour
+  - NURBSpineContour
+  - OptimizedBSplineFitter
+  - OptimizedNURBSFitter
+  - CurveEvaluator
+  - GeometryAwareMetrics
+  - SegmentExtractor
+  - ColorDetector
+  - Curves2Components
+
+这个文件更像“综合实验台”，不是单一单元测试。
+
+核心类：
+- MetamaterialAntennaTestGenerator
+  负责生成测试图像和 GT 几何。
+  可以生成矩形贴片、圆形贴片、环形、槽线、弧形槽、曲线组合、FSS 单元、天线结构、复杂分形结构等。
+
+- MetamaterialAntennaTester
+  负责对图像执行处理和拟合方法对比。
+  会运行多个方法，计算统计指标，生成可视化和报告。
+
+核心流程：
+1. 生成或读取测试图像。
+2. 使用 ImageInitializer 做居中、边缘提取等预处理。
+3. 调用多种曲线拟合器：
+   - BSplineContour
+   - NURBSpineContour
+   - OptimizedNURBSFitter
+   - OptimizedBSplineFitter
+4. 可选做颜色检测。
+5. 可选做 Curves2Components 材料/组件映射。
+6. 统计各方法轮廓数量、误差、语义准确性、参数化摘要。
+7. 输出对比图和 JSON 报告。
+
+主要测试目的：
+- 判断曲线拟合方法对超材料/天线几何的适配程度。
+- 对比 B 样条、NURBS、优化 B 样条、优化 NURBS 的拟合质量。
+- 评估边界/曲线提取是否适合后续参数化或 CST 建模。
+
+常用命令：
+
+    D:\Python\python.exe test_curve_fit_metamaterial_antenna.py
+
+指定输出目录：
+
+    D:\Python\python.exe test_curve_fit_metamaterial_antenna.py --output test_metamaterial_output
+
+测试指定图像：
+
+    D:\Python\python.exe test_curve_fit_metamaterial_antenna.py --image path\to\image.png
+
+生成/使用验证数据：
+
+    D:\Python\python.exe test_curve_fit_metamaterial_antenna.py --generate-validation
+
+主要输入：
+- 内置生成的超材料/天线样例。
+- 指定的外部图片。
+- 可选 validation_dataset。
+
+主要输出：
+- 方法对比图。
+- 拟合结果可视化。
+- JSON 报告。
+- 各方法统计表。
+
+注意：
+- 该脚本导入 NURBS 相关模块，环境缺少 geomdl 时，部分 NURBS/OptimizedNURBS 路径可能失败。
+- 如果只关注当前 VTracer 参数化，不应优先改这个文件；它主要提供传统/优化曲线拟合实验素材。
+
+======================================================================
+4. test_curve_fit_validation_dataset.py
+======================================================================
+
+测试对象：
+- validation_dataset 数据集上的曲线拟合效果。
+- 面向已有验证集样本，而不是手工生成单个超材料/天线图。
+
+它参考 test_curve_fit_metamaterial_antenna.py 的结构，但更偏“批量验证集评估”。
+
+核心类：
+- ValidationDatasetTester
+
+核心流程：
+1. 读取 validation_dataset/summary.json。
+2. 按复杂度或索引筛选样本。
+3. 对每个样本读取 image 和 GT。
+4. 使用 ImageInitializer 做图像预处理。
+5. 对同一图像运行多种拟合方法：
+   - BSplineContour
+   - NURBSpineContour
+   - OptimizedBSplineFitter
+   - OptimizedNURBSFitter
+6. 用 CurveEvaluator / GeometryAwareMetrics / SegmentExtractor 做评估。
+7. 生成每个样本的对比可视化。
+8. 汇总输出报告。
+
+主要测试目的：
+- 在标准验证集上比较不同曲线拟合算法。
+- 观察不同复杂度图形上的拟合稳定性。
+- 为优化传统曲线拟合器提供批量评估依据。
+
+常用命令：
+
+    D:\Python\python.exe test_curve_fit_validation_dataset.py
+
+指定数据集和输出目录：
+
+    D:\Python\python.exe test_curve_fit_validation_dataset.py --dataset validation_dataset --output validation_curve_fit_output
+
+只跑部分样本：
+
+    D:\Python\python.exe test_curve_fit_validation_dataset.py --max-samples 20
+
+按复杂度筛选：
+
+    D:\Python\python.exe test_curve_fit_validation_dataset.py --complexity simple
+
+主要输入：
+- validation_dataset/summary.json
+- validation_dataset 中的 images 和 GT。
+
+主要输出：
+- 样本级方法对比图。
+- 曲线拟合报告 JSON。
+- 方法综合统计表。
+
+======================================================================
+5. test_edge_detect_validation_dataset.py
+======================================================================
+
+测试对象：
+- validation_dataset 上的边缘检测方案。
+- 不是曲线参数化测试，而是参数化之前的图像边缘/轮廓提取质量测试。
+
+核心类：
+- EdgeDetectionTester
+
+涉及模块：
+- ImageInitializer
+- GTEdgeGenerator
+- GeometryAwareEdgeExtractor
+
+核心流程：
+1. 读取 validation_dataset/summary.json。
+2. 读取样本图像和 GT。
+3. 生成 GT 边缘图。
+4. 运行原始边缘检测方案。
+5. 运行几何感知边缘检测方案。
+6. 对比预测边缘与 GT 边缘：
+   - precision
+   - recall
+   - F1
+   - 像素级匹配
+7. 输出可视化和汇总报告。
+
+主要测试目的：
+- 判断边缘提取是否足够完整、连续、干净。
+- 为后续曲线拟合/参数化提供更好的输入。
+- 分析断边、噪声、漏检、误检问题。
+
+常用命令：
+
+    D:\Python\python.exe test_edge_detect_validation_dataset.py
+
+只跑前 N 个样本：
+
+    D:\Python\python.exe test_edge_detect_validation_dataset.py --max-samples 20
+
+按复杂度筛选：
+
+    D:\Python\python.exe test_edge_detect_validation_dataset.py --complexity medium
+
+不写 JSON：
+
+    D:\Python\python.exe test_edge_detect_validation_dataset.py --no-json
+
+主要输入：
+- validation_dataset/summary.json
+- validation_dataset 图像和 GT。
+
+主要输出：
+- 边缘检测对比图。
+- 边缘检测指标报告。
+
+======================================================================
+6. test_vtracer_centerline_system.py
+======================================================================
+
+测试对象：
+- VTracer 中心线参数化系统是否能在 validation_dataset 上跑通。
+- 这是 Pytest 入口，不是算法本体。
+
+它调用：
+- test_vtracer_validation_dataset.run_batch()
+
+真正被测试的核心算法：
+- vtracer_python.TraceConfig
+- vtracer_python.VTracerPython
+- VTracerPython._fit_centerline_path()
+- VTracerPython._dynamic_programming_segments()
+- VTracerPython._fit_segment_model()
+
+包含测试：
+- test_vtracer_batch_smoke_three_samples()
+  跑 3 个样本的 smoke test。
+  检查输出 summary 中是否包含 fitting / segmentation 相关指标。
+
+- test_vtracer_full_validation_dataset()
+  全量 validation_dataset 回归测试。
+  通常通过环境变量打开，避免默认测试太慢。
+
+主要测试目的：
+- 快速确认 VTracer 主流程没有崩。
+- 适合作为改动 vtracer_python.py 后的最小回归检查。
+
+常用命令：
+
+    D:\Python\python.exe -m pytest test_vtracer_centerline_system.py
+
+主要输入：
+- validation_dataset。
+
+主要输出：
+- Pytest 结果。
+- run_batch 生成的临时或指定输出目录结果。
+
+======================================================================
+7. test_vtracer_validation_dataset.py
+======================================================================
+
+测试对象：
+- validation_dataset 上的 VTracer 中心线参数化完整系统。
+- 比 test_vtracer_centerline_system.py 更完整、更重。
+
+核心流程：
+1. 读取 validation_dataset/summary.json。
+2. 对每个样本构造 TraceConfig。
+3. 调用 VTracerPython.to_svg()。
+4. VTracer 内部执行：
+   - 二值化。
+   - 中心线骨架化。
+   - 骨架路径转有序折线。
+   - 重采样。
+   - 关键点检测。
+   - 动态规划语义分段。
+   - line / arc / spline 拟合。
+   - SVG 与 metrics 输出。
+5. 读取 metrics。
+6. 汇总 batch_summary。
+7. 输出 overall visualization、worst case dashboard、top error reports。
+
+主要指标：
+- semantic_segment_count
+- line / arc / spline 段数
+- keypoints
+- rmse_px
+- mean_error_px
+- max_error_px
+- metrics_skipped
+- skip_rate
+
+注意：
+- GT 外轮廓语义段数只作为复杂度参考。
+- 中心线不一定与 GT 外轮廓一一对应，因此这里不是严格的 GT 分段对齐评测。
+- 如果要严格比较分段边界和类型，应看 test_clean_parametric_segmentation_validation.py。
+
+常用命令：
+
+    D:\Python\python.exe test_vtracer_validation_dataset.py
+
+只跑部分样本：
+
+    D:\Python\python.exe test_vtracer_validation_dataset.py --max-samples 10
+
+不生成图：
+
+    D:\Python\python.exe test_vtracer_validation_dataset.py --no-plots
+
+设置误差阈值：
+
+    D:\Python\python.exe test_vtracer_validation_dataset.py --max-mean-rmse 2.0 --max-skip-rate 0.1
+
+主要输入：
+- validation_dataset/summary.json
+- validation_dataset 样本图像和 GT。
+
+主要输出：
+- 每个样本的 SVG。
+- 每个样本的 metrics JSON。
+- batch_summary。
+- 可视化图。
+- worst case dashboard。
+
+======================================================================
+8. 按开发任务选择测试脚本
+======================================================================
+
+如果你改了 vtracer_python.py 的中心线/语义分段：
+- 先跑：
+  D:\Python\python.exe -m pytest test_vtracer_centerline_system.py
+- 再跑：
+  D:\Python\python.exe test_vtracer_validation_dataset.py --max-samples 10
+- 如果关心 GT 分段一致性，再跑：
+  D:\Python\python.exe test_clean_parametric_segmentation_validation.py --max-samples 10
+
+如果你改了 NewParams.py 的边缘/前景 mask 预处理：
+- 优先跑实际 pipeline 或 NewParams 自己的样例。
+- 同时可跑：
+  D:\Python\python.exe test_edge_detect_validation_dataset.py --max-samples 10
+- 如果影响 VTracer 输入，再跑：
+  D:\Python\python.exe test_clean_parametric_segmentation_validation.py --max-samples 10
+
+如果你改了 OptimizedBSplineFitter：
+- 跑：
+  D:\Python\python.exe test_curve_fit_metamaterial_antenna.py
+- 跑：
+  D:\Python\python.exe test_curve_fit_validation_dataset.py --max-samples 10
+- 跑新实验链路：
+  D:\Python\python.exe test_clean_parametric_segmentation_validation.py --pipeline optimized_bs_vtracer --max-samples 10
+
+如果你只想做快速 smoke test：
+- 跑：
+  D:\Python\python.exe -m pytest test_vtracer_centerline_system.py
+
+如果你想比较两次调参效果：
+- 用 test_clean_parametric_segmentation_validation.py 生成两份 report。
+- 再用：
+  D:\Python\python.exe test_clean_parametric_segmentation_validation.py --diff-report old_report.json new_report.json
+
+======================================================================
+9. 当前测试体系的层次关系
+======================================================================
+
+图像预处理层：
+- test_edge_detect_validation_dataset.py
+- NewParams.py 的实际调用样例
+
+传统/优化曲线拟合层：
+- test_curve_fit_metamaterial_antenna.py
+- test_curve_fit_validation_dataset.py
+
+VTracer 中心线参数化层：
+- test_vtracer_validation_dataset.py
+- test_vtracer_centerline_system.py
+
+GT 分段专项评估层：
+- test_clean_parametric_segmentation_validation.py
+
+实验融合链路：
+- test_clean_parametric_segmentation_validation.py --pipeline optimized_bs_vtracer
+
+
+======================================================================
+10. 2026-05-21 FSS 参数化到 CST Pipeline 维护记录
+======================================================================
+
+本节记录最近为 FSS/天线图像清洗、几何参数化、CST 建模仿真主流程做的工程修改。
+后续每次修改 pipeline、参数化、CST 重建或相关测试逻辑时，都应同步追加本文件和
+TEST_FILES_OVERVIEW_EN.txt，方便后续维护和回溯。
+
+涉及的主要文件：
+- fss_parameterized_cst_pipeline.py
+  端到端主流程：读取 Instance JSON / inline 配置，FSS 图像清洗，repair_fig.png 参数化，
+  再调用 parameterized_json_to_cst.py 进入 CST 建模与仿真。
+
+- geometry_driven_parameterizer.py
+  geometry_primitives 参数化后端。它以 VTracer/NewParams 的中心线结果为输入，
+  B-spline 只作为中间层，最终输出 line / arc / spline primitives，并保留 sampled fallback points。
+
+- parameterized_json_to_cst.py
+  CST JSON 重建入口。现在优先消费 components[*].primitives；若 primitives 不可用，则回退到
+  resampled_points / fallback_points，保证 CST 可建模。
+
+当前 pipeline 模式：
+- PARAMETERIZATION_MODE = "standard"
+  稳定保底流程：repair_fig.png -> NewParams -> VTracer -> curve_parameterization.json。
+
+- PARAMETERIZATION_MODE = "geometry_primitives"
+  新几何压缩流程：repair_fig.png -> 自适应边缘输入选择 -> VTracer centerline ->
+  B-spline 中间层质量检查 -> primitive decomposition -> compact JSON -> CST。
+
+关键修改摘要：
+1. 保留 standard 作为保底路径。
+   geometry_primitives 失败时，fss_parameterized_cst_pipeline.py 会回退到 standard。
+   若 geometry_primitives 内部判断拓扑不适合压缩，也会输出 standard_NewParams_CurveParameterizer 结果。
+
+2. 增加拓扑保护。
+   geometry_primitives 会先检查 VTracer centerline component 数量。
+   当前阈值：max_centerline_components_for_geometry = 20。
+   如果 component 数量过多，例如 test47 出现 35 个 component，则跳过 B-spline/primitive 压缩，
+   直接使用 standard JSON，避免复杂/粗导体结构被错误压缩。
+
+3. 修复 edge_mode 引发的两类问题。
+   早期强制 canny 可以恢复旧版细边缘，但会在 test48 这类有线宽结构上产生内外双层边缘。
+   后续改为自适应边缘选择：
+   - 同时生成 canny 和 auto/stroke_mask 候选；
+   - 若 canny 额外边缘与 auto/stroke_mask 在 1-3 px 内长期贴近，则认为是“近距离内外双边伪影”；
+   - 此时选择 auto/stroke_mask；
+   - 否则保留 canny。
+   诊断文件输出到：
+   geometry_primitives/01_edges/edge_selection_diagnostics.json
+
+4. 增加 B-spline 质量门。
+   对大量直线/直角的 FSS/天线结构，全局闭合 B-spline 会把直角圆滑、把长直线拉弯。
+   当前通过以下指标拒绝失真 B-spline：
+   - max_bspline_length_shrink_ratio = 0.08
+   - max_bspline_rms_error_px = 2.0
+   若 B-spline 被拒绝，则使用 corner_preserving_linear_resample_after_bspline_reject，
+   即保角的 VTracer centerline 重采样结果作为 primitive decomposition 输入。
+
+5. 增强直线优先策略。
+   为减少“本该是直线却被拟合成 arc”的情况，收紧 arc 接受条件：
+   - arc_min_sweep_deg = 28
+   - arc_min_error_improvement_ratio = 0.55
+   - arc_max_radius_to_chord_ratio = 4
+   - arc_min_source_points = 24
+   同时当 line error 接近可接受范围时拒绝 arc。
+
+6. 可视化输出调整。
+   geometry_primitives_preview.png 只显示颜色和起点，不再在图上堆大量文字。
+   详细 primitive 信息写入：
+   - geometry_primitives/06_preview/primitive_labels.json
+   - geometry_primitives/06_preview/primitive_labels.csv
+
+重要调试样例：
+- run_20260521_111329
+  发现全局 B-spline 把直线拉弯。证据：原始 centerline path length 约 7272 px，
+  B-spline 后约 6045 px，缩水约 17%。结论：主要问题在 B-spline 中间层，不是最终 primitive 分类。
+
+- _debug_bspline_guard_111329_b
+  验证 B-spline 质量门。B-spline 被拒绝后，直线明显贴回原图。
+
+- run_20260521_143843
+  发现强制 canny 导致内外双层边缘。
+
+- _debug_test48_adaptive_edge
+  验证自适应边缘选择。edge_selection_diagnostics.json 显示：
+  selected_edge_mode = auto，selected_edge_representation = stroke_mask，
+  reason = close_parallel_double_edges_detected，close_extra_ratio = 1.0。
+  primitive 数量从 112 降到 24，内外双层边缘消失。
+
+建议验证命令：
+    D:\Anaconda\envs\linefor\python.exe -m py_compile .\geometry_driven_parameterizer.py .\fss_parameterized_cst_pipeline.py .\parameterized_json_to_cst.py
+
+建议人工检查输出：
+- pipeline_runs/<run>/02_parameterization/geometry_primitives/01_edges/edge_selection_diagnostics.json
+- pipeline_runs/<run>/02_parameterization/geometry_primitives/03_ordered_centerlines/ordered_centerlines_summary.json
+- pipeline_runs/<run>/02_parameterization/geometry_primitives/04_bspline/component_*.json
+- pipeline_runs/<run>/02_parameterization/geometry_primitives/05_primitives/component_*_primitives.json
+- pipeline_runs/<run>/02_parameterization/geometry_primitives/06_preview/geometry_primitives_preview.png
+- pipeline_runs/<run>/02_parameterization/geometry_primitives/geometry_primitives_metrics.json
+
+维护约定：
+- 之后凡是修改 fss_parameterized_cst_pipeline.py、geometry_driven_parameterizer.py、
+  parameterized_json_to_cst.py、Rebuild/NewParams.py、vtracer_python.py 或 CST reconstruction 行为，
+  都必须在 TEST_FILES_OVERVIEW_CN.txt 和 TEST_FILES_OVERVIEW_EN.txt 追加简短记录。
+- 记录至少包含：修改日期、修改文件、目的、关键参数、验证样例、仍然存在的风险。
+
+2026-05-22 维护追加：自适应边缘选择漏判修复
+- 修改文件：geometry_driven_parameterizer.py。
+- 问题现象：run_20260522_123610 的 geometry_primitives_preview.png 再次出现内外多层边缘。
+- 原因：edge_selection_diagnostics.json 中 close_extra_ratio = 1.0，说明 Canny 额外边缘全部贴近 auto/stroke_mask；但旧规则还要求 canny_edge_pixels > auto_edge_pixels。本例 auto/stroke_mask 是大面积前景，auto_edge_pixels = 290865，canny_edge_pixels = 27018，因此旧规则漏判并保留 Canny。
+- 修复：去掉 canny_count > auto_count 约束。现在只要 auto 是 stroke_mask、extra_canny_pixels > 0、close_extra_ratio 达到阈值，就切换到 auto/stroke_mask。
+- 验证样例：pipeline_runs/_debug_edge_select_20260522_123610。修复后 selected_edge_mode = auto，selected_edge_representation = stroke_mask，reason = close_parallel_double_edges_detected。
+- 风险：某些真实窄间距双线结构也可能被认为是 Canny 双边伪影；后续如果遇到真实近距耦合线，需要增加物理尺度/线宽判据。
+
+2026-05-22 维护追加：auto/stroke_mask 过密候选保护
+- 修改文件：geometry_driven_parameterizer.py、fss_parameterized_cst_pipeline.py。
+- 问题现象：run_20260522_124630 的 _candidate_auto/repair_fig_edges.png 不是边缘图，而是整块前景 mask，白色像素占比约 26.6%。
+- 原因：上一轮去掉 canny_count > auto_count 后，只要 close_extra_ratio 高就会切到 auto/stroke_mask；但该样例的 auto/stroke_mask 本身是无效的大面积填充候选。
+- 修复：新增 auto/stroke_mask 有效性约束：max_stroke_mask_foreground_ratio = 0.08，max_stroke_mask_to_canny_ratio = 3.0。超过阈值时 auto_stroke_mask_valid = false，不能被选为最终边缘输入。
+- 验证样例：pipeline_runs/_debug_edge_select_20260522_124630_density_guard。修复后 selected_edge_mode = canny，auto_stroke_mask_valid = false，auto_foreground_ratio = 0.2659。
+- 风险：极粗但真实的中心线 mask 可能被判无效；后续如果出现这种结构，需要结合物理尺寸或输入图像类别调节阈值。
+
+2026-05-22 维护追加：近距离双边合并为单线先验
+- 修改文件：geometry_driven_parameterizer.py、fss_parameterized_cst_pipeline.py。
+- 问题现象：run_20260522_125241 中 Canny 输入产生近距离双边，preview 仍显示双层结构。
+- 用户先验：贴片天线设计中，如果两条直线距离过近，则按同一条线处理，否则不负责该类设计。
+- 修复：当 auto/stroke_mask 因过密无效、但 Canny 额外边缘与其近邻高度重合时，生成 _candidate_canny_merged：先对 Canny 近邻边进行形态学合并，再 skeletonize 成单像素中心线，作为 VTracer 输入。
+- 参数：close_parallel_merge_distance_px = 10。
+- 额外调整：max_centerline_components_for_geometry 从 20 放宽到 30，避免合并后的 24 个开放中心线 component 立即触发 topology fallback。
+- 验证样例：pipeline_runs/_debug_close_parallel_merge_125241。输出 _candidate_canny_merged/repair_fig_edges.png 已将近距离双边压成单线。
+- 风险：该先验会主动合并真实近距耦合线；如果未来需要负责这类结构，应关闭或降低 close_parallel_merge_distance_px。
+
+2026-05-22 维护追加：canny_merged 主结构保留率门槛
+- 修改文件：geometry_driven_parameterizer.py、fss_parameterized_cst_pipeline.py。
+- 问题现象：run_20260522_130401 的 geometry_primitives_preview.png 显示近邻双边合并过强，侧视图主体结构被压成过少的中心线，主结构信息丢失。
+- 原因：_candidate_canny_merged 对整张 Canny 图做膨胀后 skeletonize。该方法适合局部双边修复，但对侧视图这类连续边界会把真实外轮廓也中轴化。旧诊断中 canny_edge_pixels = 27018，merged_canny_edge_pixels = 5202，保留率仅约 0.1925。
+- 修复：新增 min_merged_canny_retention_ratio = 0.50。生成 _candidate_canny_merged 后先计算 merged_canny_edge_pixels / canny_edge_pixels；若低于阈值，则拒绝 canny_merged，回退到 Canny，并在 edge_selection_diagnostics.json 写入 merged_canny_rejected_erases_major_structure。
+- 验证样例：pipeline_runs/_debug_retention_guard_130401。修复后 selected_edge_mode = canny，merged_canny_retention_ratio = 0.3120，merged_canny_valid = false，主轮廓比 run_20260522_130401 保留得更完整。
+- 风险：回退到 Canny 后，某些细导体仍可能出现双边轮廓。后续更合适的方向是局部线段聚类/局部双边合并，而不是对整图做 skeleton 合并。
+
+2026-05-22 维护追加：实体 mask 拓扑分支
+- 修改文件：geometry_driven_parameterizer.py、parameterized_json_to_cst.py。
+- 问题现象：pipeline_runs/run_20260522_131935/02_parameterization/geometry_primitives/06_preview/geometry_primitives_preview.png 的拓扑仍然错误。该样例不是细线结构，而是填充 PEC 实体区域加白色槽/缺口；Canny 会给出内外双边，dense stroke_mask 做 skeleton 又会把实体区域变成中轴骨架。
+- 修复：geometry_primitives 对 dense auto/stroke_mask 增加 solid_mask_topology 分支。当 stroke_mask 前景比例 >= max(max_stroke_mask_foreground_ratio * 2, 0.12) 时，不再进入 VTracer centerline，而是从实体 mask 提取闭合外轮廓和可选 holes。提取前会按像素擦除贴近图像四边、贯穿比例很高的大外框线，避免把绘图边框并入真实金属。
+- CST 重建：parameterized_json_to_cst.py 支持 components[*].holes。每个 hole 会作为临时曲线/实体拉伸，然后用 Solid.Subtract 从父 solid 中扣除。
+- 验证样例：pipeline_runs/_debug_solid_topology_20260522_131935_b。输出 JSON 为 backend=solid_mask_topology，component_count=1，hole_count=0，预览图显示填充金属区域的单一外边界，不再是 Canny 双层或中心线骨架。
+- 风险：solid_mask_topology 当前优先保证拓扑正确，实体边界先以 polygon/line primitives 输出；后续如需更紧凑表达，可再为实体边界增加 arc/spline 压缩。
+
+2026-05-22 维护追加：可跳过 FSS 清洗
+- 修改文件：fss_parameterized_cst_pipeline.py、pipeline_test_instance.json。
+- 问题现象：run_20260522_143318 使用 test/test48.png，这张图已经是干净结构图，但 pipeline 仍然无条件调用 FSSImagePreprocessor，并把 01_fss_clean/.../repair_fig.png 交给后续端口分析和参数化。
+- 修复：参数化前新增 image preparation 分支。如果 layer_cfg、顶层 instance、preprocess、CLI 或 EDITOR_RUN_CONFIG 中设置 skip_fss_cleanup / skip_fss_repair / use_raw_image_directly，则直接使用 layer img_path，不再运行 FSS repair；同时写出 image_preparation.json，并在 metadata 中记录 fss_cleanup_skipped=true。跳过模式下不再预创建 01_fss_clean，避免误判。
+- 当前调试配置：pipeline_test_instance.json 的 layer0 已加入 "skip_fss_cleanup": true，所以 test48 会直接进入端口分析和参数化。
+- 验证：D:\Python\python.exe -m py_compile fss_parameterized_cst_pipeline.py 通过。完整运行在 D:\Python 下被 CST 包版本限制挡住：当前 CST package 只支持 Python 3.6-3.9。
+- 风险：direct mode 假设输入图片颜色已经与 col_mats 对齐；如果图中仍有文字、标注、背景干扰，应保持 skip_fss_cleanup=false。
+
+2026-05-22 维护追加：PortSearch direct-image 颜色回退
+- 修改文件：Rebuild/PortSearch.py、fss_parameterized_cst_pipeline.py。
+- 问题现象：skip_fss_cleanup=true 后，test48 在 Port Summary 阶段报错 "No valid subject component was found in the image." 原因是 test48 原图主体实际是 cyan/黄绿色，而 col_mats 仍写 gray=PEC；旧流程能工作是因为 FSS repair 会把 PEC 归一化成 gray。
+- 修复：SubjectEdgeAnalyzer 保留原来的指定颜色路径；如果指定颜色找不到有效主体，则自动扫描非 white 的 HSV 颜色范围，选择最大有效连通主体；仍失败时再用 LAB 背景距离生成非背景主体 mask。pipeline 的 port_summary 增加 resolved_subject_color，方便判断是否触发 fallback。
+- 验证：直接对 test/test48.png 以 subject_color=gray 运行 PortSearch，现在返回 subject_color=gray->auto，area=112887，bbox=(14, 7, 383, 347)，并输出 pipeline_runs/_debug_portsearch_test48_raw.png。
+- 风险：颜色 fallback 默认选择最大非白主体。多金属/多颜色图像应优先修正 col_mats，或保持 FSS cleanup 启用。
+
+2026-05-22 维护追加：稀疏 auto 边缘优先于厚 Canny
+- 修改文件：geometry_driven_parameterizer.py、fss_parameterized_cst_pipeline.py。
+- 问题现象：run_20260522_145449 的 geometry_primitives_preview.png 对 test48 明显不合理。edge_selection_diagnostics.json 选择了 Canny，但 _candidate_canny/test48_edges.png 是厚边/双边；_candidate_auto/test48_edges.png 反而是更干净的单像素 foreground contour。
+- 修复：新增 auto_edge_sparse_valid。若 auto 输出 edge representation，auto_to_canny_ratio <= max_sparse_auto_to_canny_ratio (0.45)，且 Canny 额外像素按 close_parallel_edge_ratio_threshold 大比例贴近 auto，则选择 auto 而不是 Canny。诊断文件新增 auto_edge_sparse_valid 和 max_sparse_auto_to_canny_ratio。
+- 验证：pipeline_runs/_debug_test48_sparse_auto_edge 选择 auto，reason=sparse_auto_edge_preferred_over_thick_canny。component 数从 3 降到 1，sampled points 从 2101 降到 1203，max_error 从约 2.15 px 降到约 1.60 px。
+- 风险：这次修的是边缘候选选择。对彩色填充金属截图，长期更稳的方案是直接根据 resolved PEC color mask 做参数化，而不是依赖通用边缘提取。
+
+2026-05-22 Maintenance Addendum: Graph-Based Local Spline Parameterization / 图拓扑局部样条参数化
+- Changed files / 修改文件: geometry_graph_parameterizer.py (new), fss_parameterized_cst_pipeline.py, parameterized_json_to_cst.py, test_graph_local_parameterizer.py, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt.
+- Purpose / 目的: add PARAMETERIZATION_MODE = "graph_local_primitives". It replaces the full-component/global B-spline intermediate with topology graph extraction, graph-edge splitting, and local line > arc > spline fitting. Existing geometry_primitives and standard modes remain.
+- New flow / 新流程: repair/direct image -> adaptive edge selection -> VTracer centerline extraction -> topology graph extraction -> graph edge decomposition -> local primitive fitting -> topology validation -> graph-aware JSON export -> CST.
+- Output backend / 输出: graph_local_primitives. JSON includes nodes, edges, components, constraints, metadata. Each primitive records source_edge_id, start_node, end_node, parameters, and fallback_points. fallback_points/resampled_points are always retained for CST fallback.
+- Debug outputs / 调试输出:
+  - graph_local_primitives/01_graph/topology_graph.json and topology_graph.png
+  - graph_local_primitives/02_edge_split/split_edges.json and split_edges_preview.png
+  - graph_local_primitives/03_local_fit/edge_xxxx_fit.json and edge_xxxx_fit.png
+  - graph_local_primitives/04_topology_validation/topology_validation.json
+  - graph_local_primitives/05_export/graph_primitives.json and graph_primitives_preview.png
+- Key thresholds / 关键阈值:
+  - graph_node_merge_tolerance_px = 3.0
+  - graph_endpoint_snap_tolerance_px = 4.0
+  - graph_corner_angle_threshold_deg = 38.0
+  - graph_curvature_split_percentile = 92.0
+  - max_local_spline_rms_error_px = 2.0
+  - max_local_spline_length_shrink_ratio = 0.04
+  - line_tolerance_px = 1.6, arc_tolerance_px = 1.5
+  - arc_min_sweep_deg = 28.0, arc_min_error_improvement_ratio = 0.55, arc_max_radius_to_chord_ratio = 4.0, arc_min_source_points = 24
+- Fallback chain / 回退链路: graph_local_primitives failure -> geometry_primitives -> standard. geometry_primitives internal standard topology fallback is preserved.
+- CST compatibility / CST 兼容: parameterized_json_to_cst.py now reads fallback_points when resampled_points are absent and allows open graph-edge components with two points. Compact primitive reconstruction still falls back to sampled points if needed.
+- Validation runs / 验证:
+  - D:\Python\python.exe -m py_compile .\geometry_graph_parameterizer.py .\fss_parameterized_cst_pipeline.py .\parameterized_json_to_cst.py .\test_graph_local_parameterizer.py passed.
+  - Direct execution of new regression functions passed for right-angle corner preservation, branch junction detection, close parallel line separation, and loop-anchor handling.
+  - D:\Python\python.exe -m pytest test_graph_local_parameterizer.py -q could not run because pytest is not installed in D:\Python.
+- Remaining risks / 风险: full CST build was not run here. Graph-edge export keeps topology by representing local graph edges separately; physical PEC strip width/solid handling may need later downstream support. Junction/intersection detection is conservative and may require scale-aware tuning on dense skeletons.
+
+2026-05-23 Maintenance Addendum: Parameterization-Only Stage Test Runner / 仅参数化阶段测试脚本
+- Changed files / 修改文件: run_parameterization_only.py (new), TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt.
+- Purpose / 目的: add a small-scale stage test entry point that runs only image preparation and parameterization, then stops before port summary, CST build, CST solver, or CST Python package imports.
+- Usage / 用法:
+  D:\Python\python.exe .\run_parameterization_only.py --parameterization-mode graph_local_primitives --run-name _debug_graph_param_only
+- Supported modes / 支持模式: standard, geometry_primitives, graph_local_primitives. Default is graph_local_primitives.
+- Outputs / 输出:
+  - pipeline_runs/<run>/input_instance.json
+  - pipeline_runs/<run>/image_preparation.json
+  - pipeline_runs/<run>/prepared_instance.json
+  - pipeline_runs/<run>/02_parameterization/curve_parameterization.json
+  - pipeline_runs/<run>/parameterization_only_metadata.json
+  - graph mode debug folders under 02_parameterization/graph_local_primitives/
+- Fallback chain / 回退链路: graph_local_primitives -> geometry_primitives -> standard; geometry_primitives -> standard.
+- Validation / 验证: D:\Python\python.exe -m py_compile .\run_parameterization_only.py passed.
+- Remaining risks / 风险: this runner intentionally does not validate CST reconstruction, port selection, substrate/ground creation, or solver behavior. Use it for fast parameterization-stage inspection only.
+
+2026-05-23 Maintenance Addendum: graph_local_primitives Pipeline Flow / 图拓扑局部 primitives 流程维护说明
+- Changed files / 修改文件: TEST_FILES_OVERVIEW_CN.txt, TEST_FILES_OVERVIEW_EN.txt.
+- Purpose / 目的: document the full pipeline behavior when fss_parameterized_cst_pipeline.py uses:
+  "PARAMETERIZATION_MODE": "graph_local_primitives"
+
+graph_local_primitives 的设计目标：
+- 替代旧 geometry_primitives 中的“全局 B-spline 中间层”。
+- 不对完整 contour / centerline 做全局平滑。
+- 先保护拓扑，再做局部几何压缩。
+- 局部 primitive 优先级固定为：line > arc > local spline。
+- 拓扑正确性优先级高于视觉平滑度。
+
+主 pipeline 入口：
+- 文件：fss_parameterized_cst_pipeline.py
+- 配置位置：EDITOR_RUN_CONFIG["PARAMETERIZATION_MODE"]
+- 推荐配置：
+  "PARAMETERIZATION_MODE": "graph_local_primitives"
+
+完整端到端流程：
+1. Load Instance JSON
+   - 读取 pipeline_test_instance.json 或 CLI 指定的 instance JSON。
+   - 输出：
+     pipeline_runs/<run>/input_instance.json
+
+2. Image Preparation
+   - 若 layer / instance / CLI 设置 skip_fss_cleanup=true，则直接使用 layer img_path。
+   - 否则运行 FSSImagePreprocessor，得到 repair_fig.png。
+   - 输出：
+     pipeline_runs/<run>/image_preparation.json
+     pipeline_runs/<run>/prepared_instance.json
+     pipeline_runs/<run>/01_fss_clean/.../repair_fig.png（仅未跳过 FSS cleanup 时）
+
+3. Port Summary
+   - 完整 fss_parameterized_cst_pipeline.py 会运行 PortSearch，用于后续 CST 端口。
+   - 参数化-only 测试脚本 run_parameterization_only.py 会跳过本阶段。
+   - 输出：
+     pipeline_runs/<run>/port_summary.json
+     pipeline_runs/<run>/port_analysis.png
+
+4. Parameterization: graph_local_primitives
+   - 调用：
+     FSSParameterizedCSTPipeline._parameterize_repair_image_via_graph_local_primitives()
+   - 实际类：
+     GraphBasedLocalSplineParameterizer
+   - 文件：
+     geometry_graph_parameterizer.py
+
+graph_local_primitives 内部阶段：
+1. Adaptive edge preprocessing
+   - 复用 geometry_driven_parameterizer.py 中的自适应 edge/stroke_mask 选择逻辑。
+   - 仍保留 sparse auto edge、dense stroke_mask guard、close parallel double-edge diagnostics 等既有保护。
+   - 输出：
+     02_parameterization/graph_local_primitives/00_edges/edge_selection_diagnostics.json
+     02_parameterization/graph_local_primitives/00_edges/newparams_edge_or_stroke_mask.png
+
+2. VTracer centerline extraction
+   - 复用 Rebuild/NewParams.py 与 vtracer_python.py 的中心线提取。
+   - 输入是选中的 edge/stroke_mask candidate。
+   - 输出：
+     02_parameterization/graph_local_primitives/00_vtracer_centerline/
+     02_parameterization/graph_local_primitives/00_ordered_centerlines/ordered_centerlines_summary.json
+
+3. Topology graph extraction
+   - 函数：
+     extract_topology_graph()
+   - 从 VTracer ordered centerlines 构造 graph。
+   - Node 类型：
+     endpoint, junction, corner, loop_anchor
+   - Edge 字段：
+     id, start_node, end_node, ordered_points, length, local_curvature, local_width_estimate, is_closed_loop
+   - 检测对象：
+     endpoints, T-junctions, X-junctions, loops, branches
+   - 重要约束：
+     graph 构建阶段不平滑原始像素几何。
+   - 输出：
+     02_parameterization/graph_local_primitives/01_graph/topology_graph.json
+     02_parameterization/graph_local_primitives/01_graph/topology_graph.png
+
+4. Graph edge decomposition
+   - 函数：
+     split_graph_edges_by_geometry()
+   - 按局部几何事件切边：
+     tangent angle jump, curvature peak, RDP keypoints, direction change
+   - 目标：
+     避免 giant full-contour edge；
+     让每条 graph edge 尽量对应一个局部稳定几何段。
+   - 输出：
+     02_parameterization/graph_local_primitives/02_edge_split/split_edges.json
+     02_parameterization/graph_local_primitives/02_edge_split/split_edges_preview.png
+
+5. Local geometry analysis
+   - 函数：
+     compute_geometry_features()
+   - 主要指标：
+     linearity_score, curvature_variance, arc_consistency, tangent_stability,
+     point_density, direction_histogram, length_chord_ratio
+   - 直线判断：
+     PCA / total least squares；高 lambda1/lambda2 代表强直线候选。
+   - 圆弧判断：
+     radius stability, curvature sign stability, sweep angle, radial variance。
+
+6. Local primitive fitting
+   - 函数：
+     fit_local_primitive()
+   - 固定优先级：
+     line -> arc -> local spline
+   - line：
+     PCA total least squares + endpoint lock。
+   - arc：
+     least squares circle；必须比 line 明显更好。
+   - local spline：
+     只作为局部 fallback；
+     open spline only；
+     不允许 full contour spline。
+   - 每个 primitive 都保留：
+     source_edge_id, start_node, end_node, parameters, fallback_points
+   - 输出：
+     02_parameterization/graph_local_primitives/03_local_fit/edge_xxxx_fit.json
+     02_parameterization/graph_local_primitives/03_local_fit/edge_xxxx_fit.png
+     02_parameterization/graph_local_primitives/03_local_fit/local_fit_preview.png
+
+7. Topology validation
+   - 函数：
+     validate_graph_topology()
+   - 检查：
+     edge connectivity preserved,
+     missing primitive edges,
+     node endpoint gaps,
+     tiny graph edges,
+     self intersections
+   - 关键输出指标：
+     valid,
+     topology_preservation_score,
+     junction_position_error,
+     edge_connectivity_consistency,
+     max_tiny_gap_px
+   - 输出：
+     02_parameterization/graph_local_primitives/04_topology_validation/topology_validation.json
+
+8. Graph-aware JSON export
+   - backend：
+     graph_local_primitives
+   - 顶层字段：
+     schema_version,
+     backend,
+     trace_image_path,
+     svg_path,
+     metrics_path,
+     canvas,
+     nodes,
+     edges,
+     components,
+     constraints,
+     metadata,
+     stages,
+     metrics
+   - 主输出：
+     02_parameterization/curve_parameterization.json
+     02_parameterization/graph_local_primitives/05_export/graph_primitives.json
+     02_parameterization/graph_local_primitives/05_export/graph_primitives_preview.png
+
+9. CST Build / Simulation
+   - 完整 fss_parameterized_cst_pipeline.py 会继续调用 parameterized_json_to_cst.py。
+   - parameterized_json_to_cst.py 当前兼容：
+     components[*].primitives
+     components[*].resampled_points
+     components[*].fallback_points
+   - 若 compact primitive reconstruction 失败，会回退 sampled/fallback points。
+   - run_parameterization_only.py 不进入本阶段。
+
+fallback 规则：
+- graph_local_primitives 失败：
+  -> geometry_primitives
+  -> standard
+- geometry_primitives 内部仍保留：
+  topology unsafe -> standard_NewParams_CurveParameterizer
+- standard 失败：
+  直接抛出异常。
+
+关键阈值：
+- graph_node_merge_tolerance_px = 3.0
+- graph_endpoint_snap_tolerance_px = 4.0
+- graph_corner_angle_threshold_deg = 38.0
+- graph_curvature_split_percentile = 92.0
+- max_local_spline_rms_error_px = 2.0
+- max_local_spline_length_shrink_ratio = 0.04
+- line_tolerance_px = 1.6
+- arc_tolerance_px = 1.5
+- arc_min_sweep_deg = 28.0
+- arc_min_error_improvement_ratio = 0.55
+- arc_max_radius_to_chord_ratio = 4.0
+- arc_min_source_points = 24
+
+推荐小规模阶段测试命令：
+- 只跑参数化，不跑 CST：
+  D:\Python\python.exe .\run_parameterization_only.py --parameterization-mode graph_local_primitives --run-name _debug_graph_param_only
+
+- 对比旧 geometry_primitives：
+  D:\Python\python.exe .\run_parameterization_only.py --parameterization-mode geometry_primitives --run-name _debug_geometry_only
+
+- 对比 standard：
+  D:\Python\python.exe .\run_parameterization_only.py --parameterization-mode standard --run-name _debug_standard_only
+
+推荐单元/轻量回归测试：
+- 若有 pytest：
+  D:\Python\python.exe -m pytest .\test_graph_local_parameterizer.py -q
+
+- 若当前 Python 没有 pytest，可直接运行 test_graph_local_parameterizer.py 中的四个函数，覆盖：
+  right-angle corner,
+  branch junction,
+  close parallel lines,
+  loop anchor.
+
+人工检查重点：
+- 01_graph/topology_graph.png：
+  junction 是否在真实分叉/交叉位置；
+  endpoint 是否正确；
+  loop_anchor 是否存在。
+- 02_edge_split/split_edges_preview.png：
+  长直线不应被切成大量碎片；
+  直角处应被切开，而不是被圆滑。
+- 03_local_fit/local_fit_preview.png：
+  长直段应优先为 line；
+  arc 只应出现在真实弧段；
+  spline 只应作为局部 fallback。
+- 04_topology_validation/topology_validation.json：
+  valid 应为 true；
+  topology_preservation_score 应接近 1；
+  junction_position_error 不应明显大于 graph_node_merge_tolerance_px。
+- 05_export/graph_primitives.json：
+  nodes/edges/components 数量是否合理；
+  每个 primitive 是否有 fallback_points。
+
+已知风险：
+- graph_local_primitives 当前把每条局部 graph edge 作为一个 CST component 输出，优先保证拓扑；真实 PEC 线宽/实体 strip 的物理重建仍可能需要后续增强。
+- 对很密集或很噪的 skeleton，junction/intersection 检测可能需要结合物理尺度调参。
+- 参数化-only 测试不验证 PortSearch、CST 几何布尔、substrate/ground、solver。
+
+2026-05-24 Maintenance Addendum: Edge Candidate Quality Selector and Graph Split Guard / 边缘候选质量评分与图切分保护
+- Changed files / 修改文件: geometry_driven_parameterizer.py, geometry_graph_parameterizer.py, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt.
+- Purpose / 目的: improve the image edge extraction stage before graph_local_primitives. The selector now evaluates multiple edge candidates with topology-oriented metrics instead of relying only on canny-vs-auto close-parallel diagnostics.
+- New candidates / 新候选:
+  - canny
+  - auto
+  - foreground_contour
+  - stroke_mask
+  - canny_gap_closed
+  - subject_mask_boundary
+  - optional canny_merged when close-parallel merge is valid
+- New report / 新诊断报告:
+  - graph_local_primitives/00_edges/edge_candidate_scores.json
+  - edge_selection_diagnostics.json now embeds candidate_scores, quality_selected_candidate, gap_closed_* metrics, and candidate_score_path.
+- Subject mask boundary / 主体 mask 边界路径: estimates a non-background subject mask from image border color / Otsu fallback, cleans it morphologically, extracts outer contour boundaries, scores it as subject_mask_boundary, and uses it when the topology score is clearly better.
+- Candidate scoring / 候选评分指标: edge_pixels, foreground_ratio, edge_to_baseline_ratio, component_count, small_component_ratio, largest_component_ratio, endpoint_count, junction_count, endpoint_density, junction_density, density/sparse/fragmentation/endpoint/junction/ratio penalties, continuity_reward.
+- Graph split fix / 图边切分修复: split_graph_edges_by_geometry now requires an absolute curvature threshold before accepting percentile curvature peaks, uses a larger RDP epsilon, and increases the minimum split gap. This prevents long zero-curvature straight edges from being split into many short graph edges.
+- Validation sample / 验证样例: run_parameterization_only.py --parameterization-mode graph_local_primitives --run-name _debug_edge_quality_selector_20260524_b on test/test11.png.
+  - selected_edge_mode changed to subject_mask_boundary with reason=candidate_quality_score_preferred.
+  - VTracer semantic segments dropped from 17 to 5.
+  - graph primitive_count dropped from 257 to 4.
+  - graph topology_preservation_score stayed 1.0.
+- Validation commands / 验证命令:
+  - D:\Python\python.exe -m py_compile .\geometry_driven_parameterizer.py .\geometry_graph_parameterizer.py .\run_parameterization_only.py .\test_graph_local_parameterizer.py passed.
+  - Direct execution of test_graph_local_parameterizer regression functions passed.
+- Remaining risks / 风险: subject_mask_boundary assumes the target conductor is separable from the border/background color; for annotated screenshots or multi-material/multi-color images, candidate scoring should be inspected before trusting the selected edge. Full CST reconstruction was not run in this change.
+
+2026-05-24 Maintenance Addendum: Relaxed FSS Line Gate / FSS 长直线宽松判定门
+- Changed files / 修改文件: geometry_graph_parameterizer.py, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt.
+- Purpose / 目的: reduce excessive local spline fallback when graph edges are visually and topologically long straight FSS traces with only 1-3 px raster/Canny wobble.
+- Fix / 修复: fit_local_primitive now accepts a relaxed line path only when all shape/topology indicators are strongly line-like:
+  - source_point_count >= max(12, min_segment_points)
+  - linearity_score >= 2500
+  - length_chord_ratio <= 1.012
+  - tangent_stability >= 0.965
+  - line max error <= max(line_tolerance_px * 1.75, 2.8)
+  - line mean error <= max(line_tolerance_px * 0.9, 1.45)
+- Protection / 保护: corner-like edges, U-shaped edges, and high length/chord edges do not enter the relaxed line path, so topology/corner preservation remains higher priority than smooth visual fitting.
+- Validation sample / 验证样例: run_parameterization_only.py --parameterization-mode graph_local_primitives --run-name _debug_relaxed_line_gate_20260524.
+  - selected_edge_mode = subject_mask_boundary.
+  - graph primitive_by_type changed to {"line": 4}; spline count dropped to 0 for this sample.
+  - topology_preservation_score stayed 1.0.
+- Validation commands / 验证命令:
+  - D:\Python\python.exe -m py_compile .\geometry_graph_parameterizer.py .\geometry_driven_parameterizer.py .\run_parameterization_only.py .\test_graph_local_parameterizer.py passed.
+  - Direct execution of test_graph_local_parameterizer regression functions passed.
+- Remaining risks / 风险: the relaxed gate intentionally favors straight FSS traces. If future designs contain shallow intentional curves with very high linearity and low length/chord ratio, they could be simplified to lines; inspect graph_primitives_preview.png and edge_xxxx_fit.json on those cases.
+
+2026-05-24 Maintenance Addendum: Subject Boundary Retention Guard / 主体边界信息保留保护
+- Changed files / 修改文件: geometry_driven_parameterizer.py, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt.
+- Symptom / 问题: in param_only_20260524_221014 on test/test30.png, subject_mask_boundary selected only an outer/over-simplified contour and erased too much preprocessed FSS edge information.
+- Cause / 原因: candidate scoring favored the clean single-component subject boundary even though it retained only 936 pixels versus 13082 Canny pixels, edge_to_baseline_ratio = 0.0715.
+- Fix / 修复: subject_mask_boundary now has an information-retention guard. If its edge_to_baseline_ratio is below 0.12 and the baseline Canny edge is not clearly pathological, the candidate is marked invalid with reject_reason = subject_mask_boundary_erases_preprocessed_fss_edges. Endpoint count alone no longer makes baseline Canny pathological, because thick/preprocessed FSS edges can inflate endpoint counts.
+- Validation sample / 验证样例: run_parameterization_only.py --parameterization-mode graph_local_primitives --run-name _debug_subject_retention_guard_20260524_b.
+  - selected_edge_mode changed back to canny.
+  - subject_mask_boundary valid=false, reject_reason=subject_mask_boundary_erases_preprocessed_fss_edges.
+  - graph topology_preservation_score stayed 1.0.
+  - Primitive count increased to 120, which is expected because the full edge information is preserved instead of filtered to an outer boundary.
+- Validation commands / 验证命令:
+  - D:\Python\python.exe -m py_compile .\geometry_driven_parameterizer.py .\geometry_graph_parameterizer.py .\run_parameterization_only.py passed.
+  - Direct execution of test_graph_local_parameterizer regression functions passed.
+- Remaining risks / 风险: preserving Canny on dense preprocessed images can increase primitive_count and spline count. This is intentional when the alternative candidate would delete structure; later work can reduce count through local primitive merging without dropping edge information.
+
+2026-05-24 Maintenance Addendum: Outer Square Screenshot Frame Guard / 外层近似正方形截图边框保护
+- Changed files / 修改文件: geometry_driven_parameterizer.py, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt.
+- Purpose / 目的: fix test/test23.png and similar cropped screenshots where a large near-square image-border contour is mistaken as real FSS geometry and can interfere with preserving the four outer arc connection lines.
+- Fix / 修复: edge candidates now pass through _remove_outer_square_frame_edges before scoring. It detects screenshot-like frames only when the external contour is near the image border, spans most of the image, is approximately square, and has a simple polygonal outline.
+- Detection thresholds / 阈值:
+  - bbox left/top within 8% image margin and right/bottom beyond 92% image span
+  - span_x >= 0.82 and span_y >= 0.82
+  - square aspect ratio 0.85 <= w/h <= 1.18
+  - contour area ratio >= 0.40
+  - approx polygon vertices <= 8
+  - reject removal if removed_edge_ratio > 0.35
+- Preservation behavior / 保护策略: only pixels on the detected outer contour and a thin bbox-side band are removed. The bbox interior is never filled or deleted, so internal FSS traces are preserved.
+- Diagnostics / 诊断输出: edge_selection_diagnostics.json now records outer_square_frame_cleanup for canny, auto, foreground_contour, and stroke_mask, including frame_bbox, frame_span_x/y, frame_vertices, removed_pixels, and removed_edge_ratio.
+- Subject boundary guard update / 主体边界保护更新: subject_mask_boundary min retention increased from 0.12 to 0.20, and high Canny junction density alone no longer makes Canny pathological. This prevents subject_mask_boundary from replacing a valid preprocessed FSS edge map with a sparse outer boundary.
+- Validation sample / 验证样例: run_parameterization_only.py --parameterization-mode graph_local_primitives --run-name _debug_outer_square_frame_guard_canny_20260524 on test/test23.png.
+  - original Canny edge pixels = 22621.
+  - cleaned Canny edge pixels = 20146.
+  - outer frame removed_pixels = 2475, removed_edge_ratio = 0.1094.
+  - detected frame_bbox = [36, 31, 620, 619], aspect = 1.0016, vertices = 4.
+  - selected_edge_mode = canny.
+  - subject_mask_boundary valid=false, edge_to_baseline_ratio = 0.1243, reject_reason=subject_mask_boundary_erases_preprocessed_fss_edges.
+  - graph topology_preservation_score stayed 1.0.
+- Validation commands / 验证命令:
+  - D:\Python\python.exe -m py_compile .\geometry_driven_parameterizer.py .\geometry_graph_parameterizer.py .\run_parameterization_only.py passed.
+  - Direct execution of test_graph_local_parameterizer regression functions passed.
+- Remaining risks / 剩余风险: a real FSS design with a large square outer loop extremely close to the screenshot boundary could be treated as a screenshot frame. Inspect 00_edges/_candidate_canny_frame_cleaned/repair_fig_edges.png and edge_selection_diagnostics.json for such border-dominant designs.
+
+2026-05-24 Maintenance Addendum: Color Subject Boundary Candidate / 彩色导体边界候选 有问题 并不是颜色导致的
+- Changed files / 修改文件: geometry_driven_parameterizer.py, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt.
+- Purpose / 目的: improve cropped colored FSS screenshots such as test/test23.png where Canny preserves information but splits a filled conductor into many separate edge contours, causing graph_local_primitives previews to look discontinuous.
+- Fix / 修复: added color_subject_boundary edge candidate. It builds a conductor mask from high-saturation pixels, ignores low-saturation gray screenshot frames/background, cleans the mask, then extracts all RETR_TREE contour boundaries as topology-preserving conductor outlines.
+- Thresholds / 阈值:
+  - saturation threshold = max(35, median_border_saturation + 25)
+  - value >= 35
+  - candidate foreground ratio must be between 0.002 and 0.55
+  - connected component min area = max(32, 0.0001 * image_pixels)
+  - contour min area = max(8, 0.00001 * image_pixels)
+  - final boundary still passes through outer square frame cleanup for safety
+- Selection behavior / 选择行为: color_subject_boundary is scored with the same topology-oriented candidate metrics as canny/auto/subject_mask_boundary and can be selected only when its quality score beats baseline canny by the existing margin.
+- Validation sample / 验证样例: run_parameterization_only.py --parameterization-mode graph_local_primitives --run-name _debug_color_subject_boundary_20260524 on test/test23.png.
+  - selected_edge_mode = color_subject_boundary.
+  - VTracer component_count changed from 9 Canny components to 1 color subject component.
+  - graph primitive_count changed from 101 to 40.
+  - primitive_by_type = {"line": 15, "spline": 25}.
+  - topology_preservation_score stayed 1.0.
+  - max_error_px = 1.4855.
+- Validation commands / 验证命令:
+  - D:\Python\python.exe -m py_compile .\geometry_driven_parameterizer.py .\geometry_graph_parameterizer.py .\run_parameterization_only.py passed.
+  - Direct execution of test_graph_local_parameterizer regression functions passed.
+- Remaining risks / 剩余风险: this candidate is intended for colored preprocessed FSS screenshots. Pure black/white masks or low-saturation CAD exports will fall back to the existing candidates. If non-FSS annotations are also highly saturated, inspect _candidate_color_subject_boundary/repair_fig_edges.png before trusting the selected edge.
+
+2026-05-25 Maintenance Addendum: Joblib/Loky CPU Probe Guard / joblib-loky CPU 探测保护
+- Changed files / 修改文件: run_parameterization_only.py, fss_parameterized_cst_pipeline.py, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt.
+- Symptom / 现象: in the Anaconda linefor environment, execution can print a traceback from joblib.externals.loky.backend.context._count_physical_cores and subprocess/_winapi.CreateProcess, but the parameterization still completes and writes SVG/metrics.
+- Cause / 原因: joblib/loky attempts to launch a Windows system command to detect physical CPU cores. If the command is unavailable or blocked, loky catches the failure internally and falls back, so it is noisy but not fatal.
+- Fix / 修复: both entry scripts now set LOKY_MAX_CPU_COUNT before importing project dependencies:
+  - os.environ.setdefault("LOKY_MAX_CPU_COUNT", str(max(1, os.cpu_count() or 1)))
+- Behavior / 行为: this prevents loky from entering the physical-core subprocess probe path. Because setdefault is used, a user-provided LOKY_MAX_CPU_COUNT is preserved.
+- Validation / 验证:
+  - D:\Anaconda\envs\linefor\python.exe -m py_compile .\run_parameterization_only.py .\fss_parameterized_cst_pipeline.py passed.
+  - Importing run_parameterization_only in linefor reports LOKY_MAX_CPU_COUNT=32 on this machine.
+- Remaining risks / 剩余风险: this only suppresses the joblib CPU-probe traceback. It does not change geometry fitting, edge selection, VTracer output, or CST reconstruction behavior.
+
+2026-05-25 Maintenance Addendum: FSS + Parameterization Only Runner / FSS 与参数化阶段测试脚本
+- Changed files / 修改文件: run_parameterization_only.py, TEST_FILES_OVERVIEW_CN.txt, TEST_FILES_OVERVIEW_EN.txt.
+- Purpose / 目的: adjust run_parameterization_only.py so the default small-scale test pipeline runs the FSS image repair stage and the parameterization stage, while still skipping all CST modeling and solver execution.
+- Simple pipeline / 简化流程:
+  1. Load instance JSON.
+  2. Select layer, normally layer0.
+  3. Run FSSImagePreprocessor / FSSfigDetector on layer.img_path.
+  4. Write cleaned repair image to 01_fss_clean/<layer>/<image_stem>/<result_index>/repair_fig.png.
+  5. Build prepared_instance.json, replacing layer.img_path with repair_fig.png and storing raw_img_path.
+  6. Run selected parameterization backend under 02_parameterization.
+  7. Write curve_parameterization.json and backend debug folders.
+  8. Write parameterization_only_metadata.json.
+  9. Stop. Do not call parameterized_json_to_cst.py, do not create CST project geometry, do not run CST solver.
+- Default behavior / 默认行为: run_parameterization_only.py now ignores skip_fss_cleanup / skip_fss_repair / use_raw_image_directly flags in the instance JSON by default. This makes the script a true FSS + parameterization stage test even when pipeline_test_instance.json contains layer.skip_fss_cleanup=true from earlier raw-image experiments.
+- Explicit skip options / 显式跳过选项:
+  - --skip-fss-cleanup: force direct use of layer.img_path and skip FSS repair.
+  - --honor-instance-skip: restore old behavior and honor skip_fss_cleanup / skip_fss_repair / use_raw_image_directly from the instance JSON.
+- Parameterization modes / 参数化模式:
+  - --parameterization-mode graph_local_primitives: graph local primitive pipeline; fallback chain graph_local_primitives -> geometry_primitives -> standard.
+  - --parameterization-mode geometry_primitives: geometry primitive pipeline; fallback chain geometry_primitives -> standard.
+  - --parameterization-mode standard: direct NewParams/VTracer parameterization.
+- Important outputs / 重要输出:
+  - input_instance.json: original input JSON snapshot.
+  - image_preparation.json: FSS repair status, repair_fig path, ignored_instance_skip_flags.
+  - prepared_instance.json: image path rewritten to repair_fig.png.
+  - 01_fss_clean/: FSS detector/repair output.
+  - 02_parameterization/curve_parameterization.json: parameterization result consumed by later CST stages when needed.
+  - 02_parameterization/graph_local_primitives/: edge candidates, VTracer centerline, graph, split edges, local fits, topology validation, export preview.
+  - parameterization_only_metadata.json: summary proving cst_build_skipped=true and cst_solver_skipped=true.
+- Recommended command / 推荐命令:
+  - D:\Anaconda\envs\linefor\python.exe .\run_parameterization_only.py --parameterization-mode graph_local_primitives
+- Raw-image debugging command / 原图直接参数化调试:
+  - D:\Anaconda\envs\linefor\python.exe .\run_parameterization_only.py --parameterization-mode graph_local_primitives --skip-fss-cleanup
+- Validation / 验证:
+  - D:\Anaconda\envs\linefor\python.exe -m py_compile .\run_parameterization_only.py passed.
+  - D:\Anaconda\envs\linefor\python.exe .\run_parameterization_only.py --help passed.
+  - Direct logic check: default_should_skip=False, honor_instance_should_skip=True, explicit_skip_should_skip=True for the current pipeline_test_instance.json with layer.skip_fss_cleanup=true.
+- Thresholds / 阈值: no geometry threshold changed in this update. Existing graph_local_primitives thresholds remain unchanged.
+- Remaining risks / 剩余风险: default FSS repair requires the detector model and OCR dependencies to be available. For already-clean synthetic or cropped images, use --skip-fss-cleanup when intentionally testing only edge extraction/parameterization behavior.
+
+2026-05-25 Maintenance Addendum: FSS Stage Progress Logs and KMeans Speed Guard / FSS 阶段进度日志与 KMeans 加速保护
+- Changed files / 修改文件: Rebuild/FssDetector.py, Rebuild/fssdetector_pipeline.py, Rebuild/fssdetector_selection.py, Rebuild/fssdetector_clustering.py, TEST_FILES_OVERVIEW_CN.txt, TEST_FILES_OVERVIEW_EN.txt.
+- Symptom / 现象: after enabling FSS repair in run_parameterization_only.py, the console could appear to stop around "number_of_large_contours 1" / "当前为单图场景" during Image Preparation.
+- Cause / 原因: that line is not the end of FSS processing. It is only the subimage-selection decision. After it, the pipeline still runs selected-region text cleanup, arrow/line YOLO cleanup, color clustering, mask repair, inpainting, and connected-component filtering. Previously these steps had sparse logs, so a slow downstream step looked like a hang at the single-image decision.
+- Additional hotspot / 额外热点: color quantization used KMeans n_init=10 and silhouette_score on up to 15000 sampled pixels. silhouette_score is pairwise-distance heavy and can be very slow on CPU/Windows, especially inside a stage-test runner.
+- Fix / 修复:
+  - Added explicit progress logs in FSSPipeline and FSSSelection:
+    - subimage selection / text cleanup start/done
+    - process_image start
+    - YOLO subfigure detection start/detections
+    - single-image scene selected
+    - package selected subimage coords
+    - selected-region text YOLO cleanup start/detections
+    - arrow/line YOLO cleanup start/done
+    - color clustering done
+  - Added FSSClustering progress logs for each KMeans k and final full-image KMeans.
+  - Added detector parameters:
+    - kmeans_sample_size=5000
+    - kmeans_silhouette_sample_size=2500
+    - kmeans_n_init=3
+- Behavior / 行为: if Image Preparation is slow now, the console should identify the actual slow substage instead of appearing frozen at the single-image message.
+- Validation / 验证:
+  - D:\Anaconda\envs\linefor\python.exe -m py_compile .\Rebuild\FssDetector.py .\Rebuild\fssdetector_selection.py .\Rebuild\fssdetector_clustering.py .\Rebuild\fssdetector_pipeline.py .\run_parameterization_only.py passed.
+  - D:\Anaconda\envs\linefor\python.exe .\run_parameterization_only.py --help passed.
+- Remaining risks / 剩余风险: this improves observability and reduces KMeans cost, but does not bypass the FSS detector. If YOLO/OCR inference itself is slow on CPU, the stage can still take time. Use the new logs to identify whether the delay is YOLO subfigure detection, selected-region text cleanup, arrow/line cleanup, or color clustering.
+
+2026-05-25 Maintenance Addendum: FSS Framework Instrumentation Reverted / FSS 框架本体调试改动回退
+- Changed files / 修改文件: Rebuild/FssDetector.py, Rebuild/fssdetector_pipeline.py, Rebuild/fssdetector_selection.py, Rebuild/fssdetector_clustering.py, TEST_FILES_OVERVIEW_CN.txt, TEST_FILES_OVERVIEW_EN.txt.
+- Reason / 原因: user confirmed test/test28.png runs correctly in the standalone FSS framework. To avoid perturbing the known-good FSS implementation, the temporary FSS progress-log and KMeans speed-guard changes were reverted.
+- Reverted / 已回退:
+  - Removed temporary kmeans_sample_size / kmeans_silhouette_sample_size / kmeans_n_init detector parameters.
+  - Restored auto_kmeans_color_quantization to the original sample_size=15000, n_init=10, and full silhouette_score behavior.
+  - Removed temporary FSSPipeline / FSSSelection / FSSClustering progress prints.
+- Current investigation focus / 当前排查方向: runner environment and resource differences rather than FSS algorithm code:
+  - residual python processes from interrupted runs
+  - LOKY_MAX_CPU_COUNT set by run_parameterization_only.py
+  - PyTorch CPU thread defaults
+  - standalone FSS entry versus runner import/call path
+  - output folder or post-FSS normalization differences
+- Validation / 验证:
+  - D:\Anaconda\envs\linefor\python.exe -m py_compile .\Rebuild\FssDetector.py .\Rebuild\fssdetector_selection.py .\Rebuild\fssdetector_clustering.py .\Rebuild\fssdetector_pipeline.py .\run_parameterization_only.py passed.
+- Remaining risks / 剩余风险: the previous "FSS Stage Progress Logs and KMeans Speed Guard" note is superseded by this revert note. Do not use that note as current behavior.
+
+2026-05-25 Maintenance Addendum: Patch Port Topology Detector Stage 1 / 贴片天线拓扑端口检测 Stage 1
+- Changed files / 修改文件: Rebuild/port_topology_detector.py (new), Rebuild/PortSearch.py, fss_parameterized_cst_pipeline.py, test_patch_port_detection.py, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt, logs/algorithm_updates.md.
+- Purpose / 目的: 新增可选的贴片天线端口检测器，不改变现有 PortSearch analyze() 返回 schema，也不删除最近边 CST fallback。新检测器把端口视为靠近图像边界的导体拓扑分支端点。
+- Pipeline integration / 主流程接入: fss_parameterized_cst_pipeline.py 现在会在 Port Summary 阶段自动调用 analyzer.detect_patch_ports()，在保留所有旧 closest_edge 字段的同时，把 patch_port_detection 写入 port_summary.json。
+- Key thresholds / 关键阈值: border_distance_px=8，min_component_area 继承 SubjectEdgeAnalyzer，min_skeleton_component_size=3，min_port_score=10.0，max_ports=4。
+- Debug outputs / 调试输出: 可选写入 03_port_detection/skeleton.png、endpoints.png、selected_ports.png、port_debug.json。
+- Validation samples / 验证样例: test_patch_port_detection.py 中的合成简单微带贴片、inset-feed 贴片、噪声截图 mask、纯外框 mask，以及主 pipeline port_summary 接入测试。
+- Remaining risks / 剩余风险: Stage 1 暂用端点到主体质心距离作为 path_length_to_patch 代理，还没有实现图测地路径、CPW 槽线推理和多端口消歧。
+
+2026-05-25 Maintenance Addendum: Patch Port CST Handoff and test48 Bottom Feed Fix / 贴片端口接入 CST 与 test48 底部馈线修复
+- Changed files / 修改文件: Rebuild/port_topology_detector.py, Rebuild/PortSearch.py, fss_parameterized_cst_pipeline.py, parameterized_json_to_cst.py, test_patch_port_detection.py, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt, logs/algorithm_updates.md.
+- Purpose / 目的: 当拓扑端口检测器找到贴片馈线时，让后续 CST waveguide port 真正使用该结果，而不是只写 debug metadata、CST 仍使用旧 closest_edge。
+- Fix / 修复: SubjectEdgeAnalyzer.detect_patch_ports() 在配置 subject_mask 误选青色基底/背景且没有有效端口时，会回退到低饱和导体候选 mask。检测器也把有效导体 bbox 边界视为截图留白场景下的等效馈线入口。
+- CST integration / CST 接入: ParameterizedJsonCSTBuilder 现在优先使用 patch_port_detection.ports[0]，根据 point/direction/local_width 生成小的 waveguide port 截面；没有拓扑端口时才回退到旧 closest_edge。
+- Key thresholds / 关键阈值: 低饱和 fallback 使用 saturation<=90、grayscale 20..251；bbox-border 阈值为 max(border_distance_px, min(20, 有效 bbox 短边 15%))；当 local_width/reference_width>=0.55 时对实体 mask 的宽 skeleton 伪端点降权。
+- Validation samples / 验证样例: pipeline_runs/_debug_patch_port_test48_after_fix2 对 test/test48.png 输出一个 bottom 拓扑端口，point=[213, 353]，local_width=19.0，fallback_from_subject_mask=true。test_patch_port_detection.py 增加了 CST builder 优先拓扑端口的覆盖。
+- Remaining risks / 剩余风险: CST 端口尺寸仍来自图像估计，尚未推断 CPW 地间隙、差分端口或最优 CST reference-plane distance。
+
+2026-05-25 Maintenance Addendum: Patch Topology Mask-First VTracer Input / mask-first 贴片拓扑 VTracer 输入
+- Changed files / 修改文件: geometry_driven_parameterizer.py, geometry_graph_parameterizer.py, test_patch_topology_mode.py, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt.
+- Reason / 原因: 上一版 edge_cleanup_debug 补丁已回退，因为基于 morphology 的边缘清洗会造成几何失真，并可能在 VTracer 前改变拓扑。
+- Purpose / 目的: 新增安全的可选 EDGE_REPRESENTATION_MODE = "patch_topology" 路径。它从输入图像提取填充 PEC-like mask，只删除明显的填充型外层基底/页面连通域，仅移除很小的孤立噪声，对填充 mask skeletonize，只剪极短毛刺，并在验证通过后才作为 VTracer 输入。
+- Modified functions / 修改函数: geometry_driven_parameterizer.py 中新增 build_patch_topology_vtracer_input(), extract_patch_topology_mask(), remove_outer_substrate_component(), light_denoise_topology_mask(), safe_topology_skeletonize(), prune_short_spurs(), validate_topology_preservation() 及 metrics 辅助函数。GraphBasedLocalSplineParameterizer.run() 和 GeometryDrivenParameterizer.run() 会在 adaptive edge selection 后尝试该模式，验证失败则自动回退原 edge 路径。
+- Thresholds / 阈值: low_saturation_threshold=95, min_conductor_gray=80, preferred_min_conductor_gray=180, max_conductor_gray=252, min_noise_area=6, max_spur_length_px=4, outer_frame_min_area_ratio=0.35, outer_frame_rectangularity=0.88, canvas-border skeleton suppression margin=max(6px, 短边 5%), skeleton_retention_min=0.003, candidate sanity component_count<=6 且 endpoint_count<=24。
+- Debug outputs / 调试输出: graph_local_primitives/00_edges/patch_topology_debug/01_pec_mask.png, 02_outer_frame_removed.png, 03_light_denoise.png, 04_skeleton.png, 05_pruned_skeleton.png, patch_topology_metrics.json。
+- Validation samples / 验证样例: pipeline_runs/_debug_patch_topology_graph_test48_final 针对 test/test48.png 接受 patch_topology，输出 7 个 graph primitives 和 201 个 VTracer sampled points。test/test47 在 isolated 检查中因 mask candidate 破碎被 sanity gate 拒绝，回退原 edge 路径。
+- Tests / 测试: D:\Anaconda\envs\linefor\python.exe -m pytest -q test_patch_topology_mode.py test_graph_local_parameterizer.py passed。
+- Remaining risks / 剩余风险: mask 提取依赖颜色/亮度，并保持保守。它主要面向 test48/test49 这类简单贴片天线截图；复杂 FSS 或低对比度截图应回退到原 edge selection。本补丁不改变 VTracer segmentation、primitive decomposition、CST reconstruction 或 JSON schema。
+- 2026-05-25 Maintenance Addendum: test47 Repair-First Solid-Mask Regression Fix / test47 优先 FSS repair 与 solid-mask 回归修复
+- Changed files / 修改文件: run_parameterization_only.py, fss_parameterized_cst_pipeline.py, fss_simulation_pipeline.py, Rebuild/fssdetector_pipeline.py, geometry_driven_parameterizer.py, geometry_graph_parameterizer.py, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt, logs/algorithm_updates.md.
+- Purpose / 目的: 恢复 param_only_20260525_163434 的成功路径。失败 run param_only_20260525_213410 默认使用原图 test47.png，因为 layer.skip_fss_cleanup=true 被执行；同时 YOLO 未检测到文字时也可能 passthrough 原图风格图像。
+- Fix / 修复: 参数化-only 与 CST 主 pipeline 默认 honor_instance_skip=False；YOLO no-text precheck 不再跳过完整 FSS repair；FSS detector 内部 no-text 分支继续 process_edges()；密集填充 stroke mask 在可选 patch_topology skeletonization 之前优先进入 solid_mask_topology。
+- Key thresholds / 关键阈值: 没有新增几何阈值。solid-mask dense gate 仍为 foreground_ratio >= max(max_stroke_mask_foreground_ratio * 2.0, 0.12)。
+- Validation samples / 验证样例: pipeline_runs/_verify_solid_mask_priority_20260525 中 image_preparation.stage=fss_repair, normalization_applied=true, detector_passthrough=false, actual_backend=solid_mask_topology。相关文件 py_compile 通过；pytest -q test_patch_topology_mode.py test_graph_local_parameterizer.py 通过。
+- Remaining risks / 剩余风险: FSS detector 控制台仍有一行旧乱码提示说 no-text 跳过清理，但实际行为已经继续 process_edges()。如需原图调试，请显式使用 --skip-fss-cleanup 或 --honor-instance-skip。
+- 2026-05-25 Correction / 更正: 恢复有意跳过 FSS 的快速验证逻辑。
+- Reason / 原因: 部分测试图已经是处理后的图像，因此 layer.skip_fss_cleanup=true 是有意配置，用于加快参数化阶段验证。
+- Changed behavior / 行为恢复: run_parameterization_only.py 与 fss_parameterized_cst_pipeline.py 默认 honor_instance_skip=True；FSSImagePreprocessor 与 FSS detector 的 YOLO no-text 分支恢复 passthrough，不再强制执行完整 FSS repair。
+- Preserved behavior / 保留行为: 对密集填充 stroke mask，solid_mask_topology 仍优先于可选 patch_topology skeletonization。
+- Validation sample / 验证样例: pipeline_runs/_verify_skip_fss_restored_20260525 使用 direct_input_image，跳过 FSS cleanup，约 1.7 秒完成 test48.png 参数化，并导出 7 个 graph-local primitives。
+- 2026-05-25 Maintenance Addendum / 维护补充: Direct-Image Patch Antenna Edge Selection Balance / 直接输入贴片天线边缘选择平衡
+- Changed files / 修改文件: geometry_driven_parameterizer.py, geometry_graph_parameterizer.py, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt, logs/algorithm_updates.md.
+- Purpose / 目的: 让已经处理过、并且跳过 FSS 的贴片天线图像也能稳定参数化。test48 保留稀疏边缘细节并走 graph-local 的线段化结果；test47 避免 Canny 外框/双边缘主导，保留填充主体和槽线细节。
+- Fix / 修复: patch_topology skeleton override 增加 gate，不再覆盖干净的 auto/foreground edge candidate。新增 dense filled stroke mask 判断，并在 quality-selected Canny/gap-closed 抢占之前路由到 solid_mask_topology。solid topology mask 提取现在优先信任 dense fallback mask，不再对原始截图重新 Otsu 选择黑色轮廓。
+- Key thresholds / 关键阈值: auto_dense_filled_mask 触发条件为 auto representation=stroke_mask、auto_foreground_ratio >= max(max_stroke_mask_foreground_ratio * 2.0, 0.12)、auto_to_canny_ratio >= 2.0。原 sparse auto gate 保持 auto_to_canny_ratio <= 0.45 且 close_extra_ratio >= close_parallel_edge_ratio_threshold。
+- Validation samples / 验证样例: _iter04_test47_dense_solid_20260525 使用 direct_input_image 且 actual_backend=solid_mask_topology，预览保留天线主体和细节并抑制画布外框；_iter05_test48_regression_20260525 使用 direct_input_image 且 actual_backend=graph_local_primitives，输出 12 个 primitives，与 run_20260525_192027 行为一致。
+- Remaining risks / 剩余风险: dense filled stroke mask 会故意使用实体边界拓扑，而不是中心线 graph primitives。这适合 test47 这类填充导体图，但必须继续由 stroke_mask 密度 gate 限制，避免 test48 这类稀疏边缘图被误拉入 solid topology。
+2026-05-26 Maintenance Addendum / 维护补充: Connected Patch Port CST Handoff / 贴片端口 CST 连通修复
+- Changed files / 修改文件: parameterized_json_to_cst.py, test_patch_port_detection.py, logs/algorithm_updates.md, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt.
+- Purpose / 目的: 修复贴片端口检测点位置正确、但 CST waveguide port 面落在重建馈线外侧的问题。CST builder 现在会把检测端点吸附到附近的参数化几何，再沿馈线方向向内偏移一小段，并使用精确坐标写入端口面。
+- Additional CST handoff fix / 额外 CST 交接修复: graph-local 输出的多条 open edge 如果能闭合成轮廓，会在 CST 挤出前重新串成 closed polygon，避免 open-curve `ExtrudeCurve` 失败并导致天线金属缺失。
+- Key thresholds / 关键阈值: 端口几何搜索半宽为 local_width 的 1.25/2.5/4.0 倍，最小 8/24/40 px；向内重叠为 max(3 px, min(0.5 * local_width, 14 px))；open edge 拼接阈值为中位线段长度 * 1.5，并限制在 2..5 px。
+- Validation samples / 验证样例: `pytest -q test_patch_port_detection.py` 通过 10 项测试；实际 run_20260526_120947 dry check 将 12 条 open graph edges 重建为 1 个闭合轮廓，并把端口从 (213,353) 吸附到 (204.78,341.66)；CST build-only 生成 `pipeline_runs/_verify_cst_handoff_20260526/Verify_Port_Handoff.cst`；CST solver handoff 验证生成 `pipeline_runs/_verify_cst_port_solver_20260526/Verify_Port_Solver.cst`，且 `Result/output.txt` 没有 open-curve `ExtrudeCurve` 错误。
+- Remaining risks / 剩余风险: solver handoff 已完成，但 S11 导出遇到 CST result-id 查询问题（`ResultItem does not exist for run id=0`）；后续可能需要给 S11 result tree 增加独立 fallback。
+
+2026-05-26 Correction / 更正: Port Geometry Refinement Moved Back to Detection Layer / 端口几何修正回到检测层
+- Changed files / 修改文件: Rebuild/port_geometry_builder.py, Rebuild/port_topology_detector.py, test_patch_port_detection.py, logs/algorithm_updates.md, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt.
+- Purpose / 目的: 保持 CST 仿真/重建层不动。上一版 CST 侧端口吸附和闭合轮廓 handoff 实验已经撤回；现在在写入 `patch_port_detection.ports` 之前完成贴片端口几何 refinement。
+- New module / 新模块: `CSTPortGeometryBuilder` 从 skeleton path 估计馈线切向，用 distance transform 加正交截面扫描估计馈线宽度，把 excitation plane 沿馈线向外偏移，并把端口矩形写入 debug metadata。
+- Key thresholds / 关键阈值: tangent trace distance 14 px；width samples 8 个路径像素；outward offset 为 max(3 px, 0.9 * feed_width)；port width padding 为 1.35 * feed_width；debug rectangle height 为 max(2 px, 0.25 * feed_width)。
+- Validation samples / 验证样例: `pytest -q test_patch_port_detection.py` 通过 10 项测试；run_20260526_173906 dry check 将 endpoint [213,353] 向外修正到约 [216,362] 的 port-plane center；run_20260526_190510 的底部端口也向外修正，且 CST 设置未改动。
+- Remaining risks / 剩余风险: 任意角度 rectangle 已记录在 metadata/debug 输出中，但当前 CST 消费仍使用既有 `point/direction/local_width` 字段。
+
+2026-05-26 Correction / 更正: Keep Legacy CST Port Point on Feed Contact / 兼容 CST 的端口点保持在馈线接触处
+- Changed files / 修改文件: Rebuild/port_topology_detector.py, test_patch_port_detection.py, logs/algorithm_updates.md, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt.
+- Purpose / 目的: 修复红色端口面悬空的问题。上一版把外偏移 debug rectangle 的 center 写回了 `PatchPortCandidate.point`；但现有 CST handoff 会把 `point` 当作 waveguide-port 接触位置，因此它必须保留在馈线端面上。
+- Behavior / 行为: `ports[*].point` 现在保持为馈线 endpoint/contact point；`port_geometries[*].center` 只记录外偏移 excitation-plane center，供 debug 和未来任意端口使用。`local_width` 仍可由馈线宽度估计修正。
+- Validation samples / 验证样例: `pytest -q test_patch_port_detection.py` 通过 10 项测试；run_20260526_173906 保持 selected point [213,353]，metadata 记录外偏移 center 约 [215.8,362.5]；run_20260526_190510 保持底部接触点 [894,899]。
+- Remaining risks / 剩余风险: 当前 CST handoff 尚不消费任意角度 rectangle metadata。
+
+2026-05-27 Maintenance Addendum / 维护补充: Feed Terminal Face Port Priority / 馈电端面优先
+- Changed files / 修改文件: Rebuild/port_topology_detector.py, test_patch_port_detection.py, logs/algorithm_updates.md, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt.
+- Purpose / 目的: 修复 skeleton endpoint 落到导体枝条下方、没有贴住真实馈电端面的问题。检测器现在会在有效导体 bbox 边缘增加“连续端面候选”，并让它们优先于普通 skeleton endpoint。
+- Key thresholds / 关键阈值: bbox 边距离图像边缘必须不超过 max(border_distance_px, 36) px；端面连续长度至少 6 px，且不超过该 bbox 边长的 24%；端面候选必须属于主导体连通域。
+- Validation samples / 验证样例: `pytest -q test_patch_port_detection.py test_graph_local_parameterizer.py` 通过 15 项测试；run_20260526_211823 现在选择 `(1029,850), direction=right, local_width=100.0`；run_20260527_170402 仍保持底部馈线端面 `(205,354)`。
+- Remaining risks / 剩余风险: 端面推理目前只覆盖有效 bbox 边缘，尚未处理 CPW 缝隙语义或多端口系统。
+
+2026-05-28 Maintenance Addendum / 维护补充: EM-aware feed branch port scoring / 面向电磁馈线的端口评分
+- Changed files / 修改文件: Rebuild/port_topology_detector.py, Rebuild/port_em_validator.py, logs/algorithm_updates.md, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt.
+- Purpose / 目的: 保留现有 endpoint 和 terminal-face 检测逻辑，在其后追加馈线分支追踪、宽度剖面采样、长宽比校验、弯曲/迂曲度评分和 feed-to-patch 过渡证据，使端口优先级更多依赖微带馈线物理特征，而不是简单依赖图像边界距离。
+- Key thresholds / 关键阈值: 宽度突增过渡比 2.5x；宽度变异系数目标 <0.35；max/min 宽度目标 <2.0；feed_aspect_ratio >3 加分、<1.5 降权；tortuosity <1.15 加分、>1.4 降权。
+- Debug outputs / 调试输出: 保留原有 port debug 输出，并新增 feed_branch_paths.png, feed_width_profiles.json, em_port_scores.json, junction_detection.png, rejected_candidates.json。
+- Validation samples / 验证样例: port detector、geometry builder、EM validator 和测试文件 py_compile 通过；`pytest -q test_patch_port_detection.py` 通过 11 项；实际 run_20260527_223123 选择 test47 右下馈线接触点 `(1029,850)`；实际 run_20260527_222906 选择 test48 底部馈线接触点 `(205,354)`。
+- Remaining risks / 剩余风险: junction 检测仍基于宽度剖面启发式，平滑 taper 可能得分偏低；CPW 间隙语义、多端口阵列、以及 CST 任意角度端口矩形消费仍留作后续工作。
+
+2026-05-28 Maintenance Addendum / 维护补充: First-layer valid region port constraint / 第一层轮廓端口约束
+- Changed files / 修改文件: Rebuild/PortSearch.py, Rebuild/port_topology_detector.py, Rebuild/port_geometry_builder.py, test_patch_port_detection.py, logs/algorithm_updates.md, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt.
+- Purpose / 目的: 防止截图画布边缘被误当成介质板空间。当 SubjectEdgeAnalyzer 找到的第一层主体轮廓明显像大面积基板时，PortSearch 会把它作为 `valid_region_mask` 传给端口检测；detector 用它约束 border/terminal-face 判断，geometry builder 用它把外偏 port plane 拉回第一层轮廓内部。
+- Key thresholds / 关键阈值: valid region 要求 bbox 面积比例 >=0.35，且四边距离图像边缘不超过图像尺寸的 12%；候选点允许 2 px 栅格量化容差；只有传入 valid_region_mask 时才启用裁剪，旧路径不变。
+- Validation samples / 验证样例: `pytest -q test_patch_port_detection.py` 通过 12 项；run_20260528_161404 现在输出底部接触点 `(205,353)`，保留 `raw_endpoint=(205,354)`，且 `valid_region_limited=true`；run_20260528_160542 和 run_20260527_223123 仍选择右下馈线焊盘 `(1029,850)`。
+- Remaining risks / 剩余风险: convex-hull 填充对矩形基板截图是保守有效的；复杂非凸基板后续可能需要专门的 board-contour 模型。
+
+2026-05-28 Maintenance Addendum / 维护补充: Topology port CST handoff snap / 拓扑端口 CST 交接吸附
+- Changed files / 修改文件: parameterized_json_to_cst.py, test_patch_port_detection.py, logs/algorithm_updates.md, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt.
+- Purpose / 目的: 端口检测已经正确接入，但 CST 中仍出现间隙，是因为图像 mask 的端口接触点和参数化重建后的金属末端相差少量像素。现在 topology port 在生成 CST waveguide port 前，会沿馈线方向吸附到最近的重建 PEC 端面。
+- Key thresholds / 关键阈值: 横向搜索半宽 max(6 px, 0.8*local_width_px)；传播方向最大差距 max(12 px, 2.0*local_width_px)。仅对 topology patch port 启用，旧 closest-edge fallback 不变。
+- Additional fix / 额外修正: topology-port CST 坐标改为使用精确映射值，不再对 x/y 做 floor/ceil 整数扩张，避免真实端面平面被变成低于馈线的一毫米粗 slab。
+- Validation samples / 验证样例: `pytest -q test_patch_port_detection.py` 通过 13 项；run_20260528_171216 dry handoff 将 raw `(205,353)` 吸附到重建端面 `(203.81,351.00)`，并输出精确 `Yrange -14.3649635..-14.3649635`。
+- Remaining risks / 剩余风险: 吸附依赖重建曲线采样点；如果参数化馈线本身很稀疏或错误，仍可能有残余错位。
+
+2026-05-28 Maintenance Addendum / 维护补充: Patch port summary output consolidation / 端口 JSON 输出合并
+- Changed files / 修改文件: fss_parameterized_cst_pipeline.py, test_patch_port_detection.py, logs/algorithm_updates.md, TEST_FILES_OVERVIEW_EN.txt, TEST_FILES_OVERVIEW_CN.txt.
+- Purpose / 目的: 新的 pipeline run 不再生成旧 nearest-edge `port_analysis.png`，也不再生成旧格式 `port_summary.json`。主流程现在只输出 `patch_port_summary.json` 作为端口 JSON。
+- Output shape / 输出格式: 顶层包含 `schema_version`, `ports`, `selected_port`, `port_geometries`, `debug_metadata`，同时保留 `patch_port_detection` 兼容块供 CST handoff 读取。
+- Validation samples / 验证样例: `pytest -q test_patch_port_detection.py` 通过 13 项；dry check `_verify_patch_port_summary_only` 只写出 `patch_port_summary.json`，没有生成 `port_summary.json` 或 `port_analysis.png`，test47 仍选择 `(1029,850), direction=right`。
+- Remaining risks / 剩余风险: 外部脚本如果硬编码读取 `port_summary.json`，需要改为读取 `patch_port_summary.json` 或 pipeline metadata 中的路径。

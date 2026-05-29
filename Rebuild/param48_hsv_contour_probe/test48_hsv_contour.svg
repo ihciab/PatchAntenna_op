@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="411px" height="374px" viewBox="0 0 411 374">
+  <path d="M 131.00 161.00 L 279.00 161.00" fill="none" stroke="rgb(0,0,0)" stroke-width="1.0" stroke-linecap="round" stroke-linejoin="miter" stroke-miterlimit="8" />
+  <path d="M 130.00 162.00 L 130.00 289.00" fill="none" stroke="rgb(0,0,0)" stroke-width="1.0" stroke-linecap="round" stroke-linejoin="miter" stroke-miterlimit="8" />
+  <path d="M 280.00 162.00 L 280.00 289.00" fill="none" stroke="rgb(0,0,0)" stroke-width="1.0" stroke-linecap="round" stroke-linejoin="miter" stroke-miterlimit="8" />
+  <path d="M 164.00 289.00 L 164.00 234.58 A 5.75 5.75 0 1 1 175.00 232.95 L 176.00 293.00" fill="none" stroke="rgb(0,0,0)" stroke-width="1.0" stroke-linecap="round" stroke-linejoin="miter" stroke-miterlimit="8" />
+  <path d="M 246.00 289.00 L 246.00 234.35 A 6.74 6.74 0 1 0 234.00 238.35 L 234.00 293.00" fill="none" stroke="rgb(0,0,0)" stroke-width="1.0" stroke-linecap="round" stroke-linejoin="miter" stroke-miterlimit="8" />
+  <path d="M 131.00 290.00 L 163.00 290.00" fill="none" stroke="rgb(0,0,0)" stroke-width="1.0" stroke-linecap="round" stroke-linejoin="miter" stroke-miterlimit="8" />
+  <path d="M 247.00 290.00 L 279.00 290.00" fill="none" stroke="rgb(0,0,0)" stroke-width="1.0" stroke-linecap="round" stroke-linejoin="miter" stroke-miterlimit="8" />
+  <path d="M 185.00 293.00 C 185.27 285.05 184.88 276.61 184.90 268.47 C 184.93 260.33 185.36 252.50 185.02 244.12 C 184.68 235.75 183.57 226.85 190.28 222.00 A 7.83 7.83 0 0 1 198.00 234.17 L 198.00 353.00" fill="none" stroke="rgb(0,0,0)" stroke-width="1.0" stroke-linecap="round" stroke-linejoin="miter" stroke-miterlimit="8" />
+  <path d="M 225.00 293.00 C 223.38 285.02 224.98 276.49 225.12 268.29 C 225.26 260.09 223.95 252.23 224.48 243.76 C 225.01 235.29 227.39 226.21 219.28 222.00 A 7.53 7.53 0 0 0 212.00 234.04 L 212.00 353.00" fill="none" stroke="rgb(0,0,0)" stroke-width="1.0" stroke-linecap="round" stroke-linejoin="miter" stroke-miterlimit="8" />
+  <path d="M 199.00 354.00 L 211.00 354.00" fill="none" stroke="rgb(0,0,0)" stroke-width="1.0" stroke-linecap="round" stroke-linejoin="miter" stroke-miterlimit="8" />
+</svg>

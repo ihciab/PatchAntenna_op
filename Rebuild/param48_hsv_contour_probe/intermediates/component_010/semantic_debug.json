@@ -1,0 +1,165 @@
+{
+  "closed": false,
+  "resampled_points": [
+    [
+      199.0,
+      354.0
+    ],
+    [
+      201.4,
+      354.0
+    ],
+    [
+      203.8,
+      354.0
+    ],
+    [
+      206.2,
+      354.0
+    ],
+    [
+      208.6,
+      354.0
+    ],
+    [
+      211.0,
+      354.0
+    ]
+  ],
+  "smoothed_points": [
+    [
+      199.0,
+      354.0
+    ],
+    [
+      201.5813,
+      354.0
+    ],
+    [
+      203.816,
+      354.0
+    ],
+    [
+      206.184,
+      354.0
+    ],
+    [
+      208.4187,
+      354.0
+    ],
+    [
+      211.0,
+      354.0
+    ]
+  ],
+  "raw_keypoints": [
+    0,
+    5
+  ],
+  "refined_keypoints": [
+    0,
+    5
+  ],
+  "initial_segments": [
+    {
+      "kind": "line",
+      "start_idx": 0,
+      "end_idx": 5,
+      "effective_params": 1,
+      "max_error": 0.0,
+      "start": [
+        199.0,
+        354.0
+      ],
+      "end": [
+        211.0,
+        354.0
+      ],
+      "sample_count": 6,
+      "mean_error": 0.0
+    }
+  ],
+  "global_lines": [],
+  "dp_segments": [
+    {
+      "kind": "line",
+      "start_idx": 0,
+      "end_idx": 5,
+      "effective_params": 1,
+      "max_error": 0.0,
+      "start": [
+        199.0,
+        354.0
+      ],
+      "end": [
+        211.0,
+        354.0
+      ],
+      "sample_count": 6,
+      "mean_error": 0.0
+    }
+  ],
+  "merged_segments": [
+    {
+      "kind": "line",
+      "start_idx": 0,
+      "end_idx": 5,
+      "effective_params": 1,
+      "max_error": 0.0,
+      "start": [
+        199.0,
+        354.0
+      ],
+      "end": [
+        211.0,
+        354.0
+      ],
+      "sample_count": 6,
+      "mean_error": 0.0
+    }
+  ],
+  "collapsed_full_loop_arc": false,
+  "final_segments": [
+    {
+      "kind": "line",
+      "start_idx": 0,
+      "end_idx": 5,
+      "effective_params": 1,
+      "max_error": 0.0,
+      "start": [
+        199.0,
+        354.0
+      ],
+      "end": [
+        211.0,
+        354.0
+      ],
+      "sample_count": 6,
+      "mean_error": 0.0
+    }
+  ],
+  "keypoints": [
+    0,
+    5
+  ],
+  "primitives": [
+    {
+      "kind": "line",
+      "start_idx": 0,
+      "end_idx": 5,
+      "effective_params": 1,
+      "max_error": 0.0,
+      "start": [
+        199.0,
+        354.0
+      ],
+      "end": [
+        211.0,
+        354.0
+      ]
+    }
+  ],
+  "boundary_field_weight": 0.08,
+  "boundary_field_mean": 0.0,
+  "boundary_field_max": 0.0
+}

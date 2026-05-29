@@ -1,0 +1,7 @@
+FeatureKeywords:string:modeler:load:fastloading, acisinterface:removebboxcache:modeler:applytransform, modeler:model:anchorpoints, DELETERESULTS:M0P0, mesh::background::boolean, meshloading:problem_class_only, model:layerstacking:automatic, mesh:workflow:nru, mesh:workflow:srf2vol, mesh:workflow:boolean, mesh:workflow:boolean:advanced, mesh::attributes:rstepw, mesh:workflow:cad2srf, mesh:lib:blsurf, acceleration:cpu:16, acceleration:cpudevices:1, solver:hf:fd:task:1, monitor:resultfilemap:load, monitor:scaling:peak, mesh:tet:adaptive:anisotropicedge, solver:hf:fd:thinsheetrefinement, solver:hf:fd:meshspawning, la:precond:pdss7, DenseInitDangerousDim, lineqssolver:setting:acceleratedrestart, lineqssolver:setting:auto, lineqssolver:setting:treecotree, mesh:tet:adaptive, solver:hf:fd, modeler:model:anchorpoints:saving, modeler:hidfile:unique_ids, block:type:saved:MWSSCHEM, meshline:hex:check_after_loading:default, meshline:hex:handling_legacy:no, modeler:model:anchorpoints:loading, DELETERESULTS:M000
+LastWorkflowState:string:tetmesh:success
+tetmesh/InitialFreePhysicalInMB:int:916
+tetmesh/MaxResidentSizeInMB:int:110
+tetmesh/MaxResidentSizeMiB:int:172
+tetmesh/MinFreePhysicalInMB:int:875
+---

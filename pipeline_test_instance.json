@@ -1,0 +1,28 @@
+{
+  "Folder_path": "D:\\CST2023proj\\autocst_MA\\2026051871433",
+  "Instance": "Microstrip_Antenna",
+  "mode": "S",
+  "Units": [
+    "mm",
+    "GHz"
+  ],
+  "FSS_package": {
+    "X": 36,
+    "Y": 36,
+    "f0": 6,
+    "f1": 14
+  },
+  "layers": {
+    "layer0": {
+      "img_path": "D:\\cst2py_box\\Auto_py2cst_v0.71\\test\\test48.png",
+      "skip_fss_cleanup": true,
+      "substrate": 0.6,
+      "gnd": true,
+      "col_mats": {
+        "white": "Rogers RT-duroid 5880 (loss free)",
+        "gray": "PEC"
+      }
+      
+    }
+  }
+}

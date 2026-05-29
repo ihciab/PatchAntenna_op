@@ -1,0 +1,67 @@
+// CST Tetrahedral High Frequency slim mesh related information, Version no.:
+// ^^^^^^^^^^^^^^^^^^^^^^^^^^
+1.3
+
+// Geometric coord "zero" tolerance threshold:
+// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1e-05
+
+// Model entity count: Vertices, Edges, Faces, Cells:
+// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2650 2668 26 2
+
+// Physical Object counts (#Obj3D,#Obj2D,#Obj1D,#Obj0D):
+// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+3 28 1 1
+
+// Number of Ports (Ports are a subset of Object2D list):
+// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1
+
+// Object3D GroupID, #UIDs  <immediately followed by> list of UIDs:
+// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+0 0
+1 1
+5345
+2 1
+5346
+
+// Object2D GroupID, UID(s):
+// ^^^^^^^^^^^^^^^^^^^^^^
+0 0
+1 5343
+2 5319
+3 5320
+4 5321
+5 5322
+6 5323
+7 5324
+8 5325
+9 5326
+10 5327
+11 5328
+12 5329
+13 5330
+14 5331
+15 5332
+16 5333
+17 5334
+18 5335
+19 5336
+20 5337
+21 5338
+22 5339
+23 5340
+24 5341
+25 5342
+26 5343 P
+27 5344
+
+// Object1D GroupID, #UIDs  <immediately followed by> list of UIDs:
+// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+0 0
+
+// Object0D, UID:
+// ^^^^^^^^^^^^^^
+0 0
+

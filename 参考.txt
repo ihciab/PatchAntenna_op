@@ -1,0 +1,3 @@
+输入就是文件夹中的图片，主要py文件是Rebuild文件夹中的BSplineContour.py和NURBSpline.py，前者是后者的父类，后者继承了前者修了父类私有的bspline_process
+只需要修改NURBSpline.py中if __name__ == '__main__':下的II = ImageInit(r"D:\datasheet\test\test21.png")
+依赖前置的图像预处理模块

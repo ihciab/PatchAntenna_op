@@ -1,0 +1,35 @@
+{
+  "component_count": 1,
+  "mean_rmse_px": 0.2948515892555833,
+  "max_component_error_px": 1.497878453735268,
+  "mean_reduction_ratio": 0.06324110671936758,
+  "total_line_segments": 1,
+  "total_arc_segments": 3,
+  "total_curve_segments": 3,
+  "total_semantic_segments": 5,
+  "total_semantic_line": 1,
+  "total_semantic_arc": 3,
+  "total_semantic_spline": 1,
+  "components": [
+    {
+      "component_id": 1,
+      "closed": true,
+      "samples": 253,
+      "control_points": 16,
+      "effective_params": 16,
+      "line_segments": 1,
+      "arc_segments": 3,
+      "curve_segments": 3,
+      "bspline_control_points": 6,
+      "keypoints": 5,
+      "semantic_segment_count": 5,
+      "semantic_segments_line": 1,
+      "semantic_segments_arc": 3,
+      "semantic_segments_spline": 1,
+      "rmse_px": 0.2948515892555833,
+      "mean_error_px": 0.21880544608309008,
+      "max_error_px": 1.497878453735268,
+      "reduction_ratio": 0.06324110671936758
+    }
+  ]
+}

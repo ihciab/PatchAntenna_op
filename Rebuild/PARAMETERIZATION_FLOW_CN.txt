@@ -1,0 +1,535 @@
+参数化流程说明文档（中文）
+版本目的：给开发者和大语言模型快速理解当前“结构图片 -> 曲线参数化 JSON”的流程。
+
+======================================================================
+1. 一句话概览
+======================================================================
+
+当前参数化流程的目标是：
+输入一张结构图或修复后的结构图，提取可用于几何建模的中心线/边界路径，
+再将每条路径分解并拟合为 line、arc、spline 三类语义曲线段，
+最后输出 JSON、SVG、metrics 和可视化 PNG。
+
+当前最重要的设计点：
+对于 pipeline 中的灰度 repair_fig.png，粗线条不再直接做 Canny 边缘追踪。
+否则粗线条会被识别成内外两层边界，导致参数化结果杂乱。
+现在默认使用 stroke_mask：先把粗线条看成前景实体，再提取中心线骨架。
+
+======================================================================
+2. 关键文件
+======================================================================
+
+1. Rebuild/NewParams.py
+   - 当前外部主要入口。
+   - 包含 NewParams 和 CurveParameterizer 两个类。
+   - NewParams 负责图像预处理、边缘/前景 mask 提取。
+   - CurveParameterizer 负责调用 vtracer_python.py，并整理 JSON/PNG 输出。
+
+2. vtracer_python.py
+   - 参数化算法主体。
+   - 负责二值化、骨架化、路径排序、重采样、关键点检测、动态规划分段、
+     line/arc/spline 拟合、metrics 和中间调试文件输出。
+
+3. fss_parameterized_cst_pipeline.py
+   - FSS 总 pipeline 入口之一。
+   - 在 _parameterize_repair_image() 中调用：
+     NewParams(repair_path, save_dir=param_dir)
+     params.parameterize(save_dir=param_dir)
+     parameterizer.save_json(...)
+     parameterizer.visualize(...)
+
+4. parameterized_json_to_cst.py
+   - 使用参数化 JSON 生成 CST 几何。
+   - 它不负责图像参数化，只消费参数化结果。
+
+======================================================================
+3. 外部输入与输出
+======================================================================
+
+典型输入：
+- repair_fig.png
+  pipeline 清理/修复后的结构图，通常是灰度图，灰色线条代表 PEC/结构图形。
+- 或普通结构图片。
+
+典型输出目录：
+- pipeline_runs/<run_id>/02_parameterization/
+
+主要输出文件：
+- repair_fig_edges.png
+  NewParams 产生的预处理结果。
+  注意：名字叫 edges，但当 edge_representation=stroke_mask 时，它实际是前景线条 mask。
+
+- repair_fig_trace_input.png
+  CurveParameterizer 写出的临时追踪输入图。
+
+- repair_fig.svg
+  VTracerPython 输出的 SVG。
+
+- repair_fig_metrics.json
+  参数化质量指标，例如 component_count、total_semantic_segments、
+  total_line_segments、total_arc_segments、total_curve_segments、误差等。
+
+- curve_parameterization.json
+  最重要的结构化参数化结果。
+  后续 CST 构建主要消费这个文件。
+
+- curve_parameterization.png
+  可视化结果。
+  左侧通常是原图，右侧是拟合后的语义曲线：
+  line 通常为蓝色/橙色系，arc 为橙色，spline 为绿色，红点表示 component 起点。
+
+- intermediates/
+  每个 component 的中间调试结果。
+  重点看 component_xxx/semantic_debug.json。
+
+======================================================================
+4. 总体调用链
+======================================================================
+
+典型代码：
+
+    from Rebuild.NewParams import NewParams
+
+    params = NewParams(repair_path, save_dir=param_dir)
+    parameterizer = params.parameterize(save_dir=param_dir)
+    parameterizer.save_json(param_dir / "curve_parameterization.json")
+    parameterizer.visualize(param_dir / "curve_parameterization.png")
+
+核心调用链：
+
+    NewParams.__init__()
+        -> NewParams.process()
+            -> read image
+            -> convert to normalized gray
+            -> Gaussian blur
+            -> _extract_edges()
+            -> save repair_fig_edges.png
+
+    NewParams.parameterize()
+        -> decide edge_contour_tracing
+        -> CurveParameterizer(...)
+
+    CurveParameterizer.parameterize()
+        -> _prepare_trace_image()
+        -> build TraceConfig
+        -> VTracerPython(cfg).to_svg(...)
+        -> load metrics
+        -> load intermediates/component_xxx/semantic_debug.json
+        -> normalize semantic segments
+
+    CurveParameterizer.save_json()
+        -> write curve_parameterization.json
+
+    CurveParameterizer.visualize()
+        -> write curve_parameterization.png
+
+======================================================================
+5. NewParams 预处理逻辑
+======================================================================
+
+NewParams 的核心任务：
+把输入图转成适合 VTracerPython 的二值图。
+
+重要参数：
+- edge_mode
+  可选值：
+  - auto
+  - canny
+  - foreground_contour
+  - stroke_mask
+
+- remove_border_edges
+  是否去除贴近图像边界的边缘噪声。
+
+- remove_large_frame_edges
+  是否去除大外框。
+
+当前 auto 模式逻辑：
+
+1. 尝试 _extract_foreground_stroke_mask(original_img)
+   - 从灰度图中提取非白色前景。
+   - 用形态学 close 连接小断裂。
+   - 识别并移除很大的外部 frame。
+   - 去除过小噪声、贴边组件。
+
+2. 如果输入图看起来是 normalized grayscale：
+   - _image_looks_normalized_grayscale(original_img) 返回 True。
+   - 自动选择 stroke_mask。
+   - 打印：
+     [NewParams] edge_mode=auto selected stroke_mask centerline input
+   - 设置：
+     edge_representation = "stroke_mask"
+
+3. 如果不适合 stroke_mask：
+   - 尝试 foreground_contour。
+
+4. 如果仍不适合：
+   - fallback 到 Canny。
+
+为什么 stroke_mask 很重要：
+- 对粗线条直接 Canny，会得到线条两侧的边缘。
+- 后续 edge_contour_tracing 会把两侧边缘都参数化，形成双层结构。
+- stroke_mask 把粗线条当作一个实体，再由中心线骨架提取单线表示。
+
+======================================================================
+6. edge_contour_tracing 的自动切换
+======================================================================
+
+NewParams.parameterize() 中有关键逻辑：
+
+    if "edge_contour_tracing" not in kwargs:
+        kwargs["edge_contour_tracing"] = self.__edge_representation != "stroke_mask"
+
+含义：
+- 如果当前输入是普通 edge：
+  edge_contour_tracing=True
+  允许 VTracerPython 把边缘轮廓转成路径。
+
+- 如果当前输入是 stroke_mask：
+  edge_contour_tracing=False
+  禁止追踪粗线条边界，改走中心线骨架。
+
+这是修复“粗线条被参数化成两层结构”的核心。
+
+======================================================================
+7. CurveParameterizer 的职责
+======================================================================
+
+CurveParameterizer 是 NewParams 和 VTracerPython 之间的适配层。
+
+主要职责：
+
+1. 准备追踪输入图
+   - 默认 trace_source="edges"。
+   - 将 NewParams 的 edges/mask 写成 repair_fig_trace_input.png。
+
+2. 构造 TraceConfig
+   关键配置包括：
+   - trace_style="centerline"
+   - mode="spline"
+   - fit_tolerance
+   - resample_step
+   - filter_speckle
+   - gaussian_sigma
+   - semantic_window_size
+   - keypoint_angle_threshold_deg
+   - dp_complexity_weight
+   - dp_max_segment_points
+   - line_merge_angle_deg
+   - arc_radius_rel_tol
+   - arc_center_tol
+   - arc_min_sweep_deg
+   - spline_ctrl_penalty
+   - centerline_trace_edge_contours
+
+3. 调用 VTracerPython
+   - VTracerPython(cfg).to_svg(svg_path)
+
+4. 读取结果
+   - repair_fig_metrics.json
+   - intermediates/component_xxx/semantic_debug.json
+
+5. 整理成统一 JSON
+   - save_json() 输出 curve_parameterization.json。
+
+6. 生成可视化
+   - visualize() 输出 curve_parameterization.png。
+
+======================================================================
+8. VTracerPython 中心线语义参数化流程
+======================================================================
+
+VTracerPython 是真正的参数化算法主体。
+
+高层流程：
+
+    VTracerPython.to_svg()
+        -> _to_centerline_svg()
+            -> _binarize_foreground_mask()
+            -> skeletonize / edge contour trace
+            -> split connected components
+            -> convert skeleton graph to ordered paths
+            -> _resample_polyline()
+            -> _fit_centerline_path()
+
+语义拟合核心：
+
+    _fit_centerline_path()
+        -> smooth path
+        -> detect keypoints
+        -> create candidate boundaries
+        -> over-segment path
+        -> dynamic programming over line/arc/spline
+        -> merge compatible neighboring segments
+        -> output semantic_debug.json
+
+每段模型选择：
+
+    _fit_segment_model()
+        -> try line
+        -> try arc
+        -> try spline
+        -> choose the model with acceptable error and lower complexity cost
+
+输出 primitive 类型：
+- line
+  适合直线段。
+
+- arc
+  适合圆弧段。
+
+- spline
+  适合复杂曲线，通常是 B 样条/曲线段。
+
+======================================================================
+9. curve_parameterization.json 结构
+======================================================================
+
+顶层字段：
+
+- backend
+  当前通常是 "vtracer_python"。
+
+- trace_image_path
+  实际送入 VTracerPython 的图。
+
+- svg_path
+  SVG 输出路径。
+
+- metrics_path
+  metrics JSON 路径。
+
+- metrics
+  整体质量指标。
+
+- components
+  参数化后的连通组件列表。
+
+component 典型字段：
+
+- component_id
+- component_dir
+- debug_path
+- closed
+- sampled_point_count
+- resampled_points
+- smoothed_points
+- raw_keypoints
+- refined_keypoints
+- keypoints
+- global_lines
+- segments
+- debug
+
+segment 典型字段：
+
+- segment_id
+- kind / type
+  line、arc 或 spline。
+
+- start_idx / end_idx
+  该 segment 在 resampled_points 中的起止索引。
+
+- effective_params
+  该段有效参数数量。
+
+- max_error / mean_error
+  该段拟合误差。
+
+- 其他模型参数
+  line、arc、spline 的具体字段由 vtracer_python.py 生成。
+
+======================================================================
+10. 调试时优先看的日志
+======================================================================
+
+NewParams 日志：
+
+- [NewParams] edge_mode: auto
+- [NewParams] edge_mode=auto selected stroke_mask centerline input
+- [NewParams] edge pixels: ...
+- [NewParams] edge representation: stroke_mask
+
+CurveParameterizer 日志：
+
+- trace image
+- output dir
+- metrics path
+- fit_tolerance
+- resample_step
+- edge_contour_tracing
+- components
+- semantic segments
+- by kind
+- max_component_error_px
+
+如果看到：
+
+    edge representation: stroke_mask
+    edge_contour_tracing=False
+
+说明粗线条不会再被当成双层边界追踪。
+
+如果看到：
+
+    edge representation: edge
+    edge_contour_tracing=True
+
+说明当前走的是边缘轮廓追踪，更适合细线边缘图，但可能不适合粗灰线 repair 图。
+
+======================================================================
+11. 常见问题与处理方向
+======================================================================
+
+问题 A：粗线条变成双层结构。
+
+原因：
+- Canny 得到了粗线条的两侧边界。
+- edge_contour_tracing=True 时，两侧边界都会被参数化。
+
+处理：
+- 对灰度 repair 图使用 edge_mode="auto" 或 edge_mode="stroke_mask"。
+- 确认日志中 edge_representation=stroke_mask。
+- 确认 edge_contour_tracing=False。
+
+问题 B：线条有断点，component 数量过多。
+
+原因可能包括：
+- 前景 mask 有断裂。
+- skeleton 分支被拆成多条路径。
+- 细化后端点没有合并。
+
+处理方向：
+- 在 _extract_foreground_stroke_mask() 中增强形态学 close。
+- 在骨架图阶段增加端点连接。
+- 在 component/path 阶段做近邻端点合并。
+- 检查 intermediates/mask_binary.png 和 mask_skeleton.png。
+
+问题 C：长圆弧被识别成直线。
+
+原因可能包括：
+- 采样点太少或 keypoint/DP 代价偏向 line。
+- arc_min_sweep_deg、arc_radius_rel_tol、dp_complexity_weight 不合适。
+
+处理方向：
+- 减小 resample_step，增加弧线采样密度。
+- 调整 arc_radius_rel_tol、arc_center_tol、arc_min_sweep_deg。
+- 降低 line 合并过强的倾向。
+
+问题 D：spline 过多，参数数量太大。
+
+原因可能包括：
+- line/arc 拟合误差阈值过严。
+- spline_ctrl_penalty 偏低。
+
+处理方向：
+- 适当增大 fit_tolerance。
+- 增大 spline_ctrl_penalty。
+- 增强 line/arc 后处理合并。
+
+问题 E：外部大框被参数化进去。
+
+原因：
+- 外框没有在预处理阶段移除。
+
+处理：
+- 保持 remove_large_frame_edges=True。
+- 调整 large_frame_span_ratio。
+- 检查 _extract_foreground_stroke_mask() 中的大 frame 删除逻辑。
+
+======================================================================
+12. 关键调参入口
+======================================================================
+
+NewParams 侧：
+
+- edge_mode
+  auto / canny / foreground_contour / stroke_mask。
+
+- blur_kernel_size
+  Canny 前的高斯模糊核。
+
+- morph_kernel_size, dilate_iterations, erode_iterations
+  边缘或 mask 的形态学处理。
+
+- remove_border_edges, remove_large_frame_edges
+  去除边界噪声和外框。
+
+CurveParameterizer / TraceConfig 侧：
+
+- fit_tolerance
+  总体拟合误差容忍度。
+
+- resample_step
+  沿曲线重采样间距。越小点越密，弧线更容易被识别，但计算更多。
+
+- gaussian_sigma
+  路径平滑强度。
+
+- semantic_window_size
+  语义边界/关键点检测窗口。
+
+- keypoint_angle_threshold_deg
+  角点检测阈值。
+
+- dp_complexity_weight
+  动态规划对模型复杂度的惩罚。
+
+- dp_max_segment_points
+  单个 DP segment 的最大点数。
+
+- line_merge_angle_deg
+  相邻直线合并角度阈值。
+
+- arc_radius_rel_tol, arc_center_tol, arc_min_sweep_deg
+  圆弧判定和合并相关参数。
+
+- spline_ctrl_penalty
+  spline 控制点复杂度惩罚。
+
+======================================================================
+13. 推荐给大语言模型的理解顺序
+======================================================================
+
+如果一个模型需要快速理解并修改参数化流程，推荐按这个顺序阅读：
+
+1. 先读本文件。
+2. 读 Rebuild/NewParams.py：
+   - NewParams._extract_edges()
+   - NewParams._extract_foreground_stroke_mask()
+   - NewParams.parameterize()
+   - CurveParameterizer.parameterize()
+   - CurveParameterizer.save_json()
+   - CurveParameterizer.visualize()
+
+3. 再读 vtracer_python.py：
+   - TraceConfig
+   - VTracerPython.to_svg()
+   - _to_centerline_svg()
+   - _fit_centerline_path()
+   - _fit_segment_model()
+   - _dynamic_programming_segments 或相关 DP 函数
+   - _merge_semantic_segments()
+
+4. 如果要调 pipeline：
+   - 读 fss_parameterized_cst_pipeline.py 中的 _parameterize_repair_image()。
+
+5. 如果要调 CST 几何生成：
+   - 读 parameterized_json_to_cst.py。
+
+======================================================================
+14. 当前状态总结
+======================================================================
+
+当前流程已经重点修复：
+- 灰度 repair 图中的粗线条不再被参数化成双层结构。
+- auto 模式会优先识别 stroke_mask。
+- stroke_mask 会自动关闭 edge_contour_tracing。
+- 输出日志能明确显示当前使用的是 edge 还是 stroke_mask。
+
+当前仍可能需要继续优化：
+- 中心线骨架的端点连接。
+- 分支处的 component/path 合并。
+- 弧线和直线之间的模型选择稳定性。
+- 对不同数据集的参数自适应。
+

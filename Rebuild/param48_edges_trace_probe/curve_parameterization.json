@@ -1,0 +1,8 @@
+{
+  "backend": "vtracer_python",
+  "trace_image_path": "D:\\cst2py_box\\Auto_py2cst_v0.71\\Rebuild\\param48_edges_trace_probe\\test48_edges_trace_trace_input.png",
+  "svg_path": "D:\\cst2py_box\\Auto_py2cst_v0.71\\Rebuild\\param48_edges_trace_probe\\test48_edges_trace.svg",
+  "metrics_path": "D:\\cst2py_box\\Auto_py2cst_v0.71\\Rebuild\\param48_edges_trace_probe\\test48_edges_trace_metrics.json",
+  "metrics": {},
+  "components": []
+}

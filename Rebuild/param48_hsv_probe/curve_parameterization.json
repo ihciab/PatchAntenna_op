@@ -1,0 +1,5781 @@
+{
+  "backend": "vtracer_python",
+  "trace_image_path": "Rebuild\\param48_hsv_probe\\test48_hsv_trace_input.png",
+  "svg_path": "Rebuild\\param48_hsv_probe\\test48_hsv.svg",
+  "metrics_path": "Rebuild\\param48_hsv_probe\\test48_hsv_metrics.json",
+  "metrics": {
+    "component_count": 7,
+    "mean_rmse_px": 0.2809090761363103,
+    "max_component_error_px": 1.500456093313435,
+    "mean_reduction_ratio": 0.10258948251559089,
+    "total_line_segments": 11,
+    "total_arc_segments": 8,
+    "total_curve_segments": 6,
+    "total_semantic_segments": 21,
+    "total_semantic_line": 11,
+    "total_semantic_arc": 8,
+    "total_semantic_spline": 2,
+    "components": [
+      {
+        "component_id": 1,
+        "closed": false,
+        "samples": 24,
+        "control_points": 2,
+        "effective_params": 2,
+        "line_segments": 2,
+        "arc_segments": 0,
+        "curve_segments": 0,
+        "bspline_control_points": 0,
+        "keypoints": 3,
+        "semantic_segment_count": 2,
+        "semantic_segments_line": 2,
+        "semantic_segments_arc": 0,
+        "semantic_segments_spline": 0,
+        "rmse_px": 0.16783069292212832,
+        "mean_error_px": 0.07670428663486191,
+        "max_error_px": 0.5089943670222828,
+        "reduction_ratio": 0.08333333333333333
+      },
+      {
+        "component_id": 2,
+        "closed": false,
+        "samples": 48,
+        "control_points": 3,
+        "effective_params": 3,
+        "line_segments": 1,
+        "arc_segments": 1,
+        "curve_segments": 0,
+        "bspline_control_points": 0,
+        "keypoints": 3,
+        "semantic_segment_count": 2,
+        "semantic_segments_line": 1,
+        "semantic_segments_arc": 1,
+        "semantic_segments_spline": 0,
+        "rmse_px": 0.06887575894132095,
+        "mean_error_px": 0.03489350865003869,
+        "max_error_px": 0.4104125374565741,
+        "reduction_ratio": 0.0625
+      },
+      {
+        "component_id": 3,
+        "closed": false,
+        "samples": 48,
+        "control_points": 3,
+        "effective_params": 3,
+        "line_segments": 1,
+        "arc_segments": 1,
+        "curve_segments": 0,
+        "bspline_control_points": 0,
+        "keypoints": 3,
+        "semantic_segment_count": 2,
+        "semantic_segments_line": 1,
+        "semantic_segments_arc": 1,
+        "semantic_segments_spline": 0,
+        "rmse_px": 0.26384170389781103,
+        "mean_error_px": 0.11039191587132074,
+        "max_error_px": 0.7566631328639506,
+        "reduction_ratio": 0.0625
+      },
+      {
+        "component_id": 4,
+        "closed": false,
+        "samples": 27,
+        "control_points": 3,
+        "effective_params": 3,
+        "line_segments": 1,
+        "arc_segments": 1,
+        "curve_segments": 0,
+        "bspline_control_points": 0,
+        "keypoints": 3,
+        "semantic_segment_count": 2,
+        "semantic_segments_line": 1,
+        "semantic_segments_arc": 1,
+        "semantic_segments_spline": 0,
+        "rmse_px": 0.22786215266012924,
+        "mean_error_px": 0.1936278594306254,
+        "max_error_px": 0.481074778361046,
+        "reduction_ratio": 0.1111111111111111
+      },
+      {
+        "component_id": 5,
+        "closed": false,
+        "samples": 49,
+        "control_points": 7,
+        "effective_params": 7,
+        "line_segments": 1,
+        "arc_segments": 3,
+        "curve_segments": 0,
+        "bspline_control_points": 0,
+        "keypoints": 5,
+        "semantic_segment_count": 4,
+        "semantic_segments_line": 1,
+        "semantic_segments_arc": 3,
+        "semantic_segments_spline": 0,
+        "rmse_px": 0.5681170954428144,
+        "mean_error_px": 0.4064053633773716,
+        "max_error_px": 1.4789641714889825,
+        "reduction_ratio": 0.14285714285714285
+      },
+      {
+        "component_id": 6,
+        "closed": false,
+        "samples": 148,
+        "control_points": 20,
+        "effective_params": 20,
+        "line_segments": 2,
+        "arc_segments": 0,
+        "curve_segments": 6,
+        "bspline_control_points": 12,
+        "keypoints": 5,
+        "semantic_segment_count": 4,
+        "semantic_segments_line": 2,
+        "semantic_segments_arc": 0,
+        "semantic_segments_spline": 2,
+        "rmse_px": 0.28581847640079133,
+        "mean_error_px": 0.1716212332356607,
+        "max_error_px": 1.500456093313435,
+        "reduction_ratio": 0.13513513513513514
+      },
+      {
+        "component_id": 7,
+        "closed": false,
+        "samples": 58,
+        "control_points": 7,
+        "effective_params": 7,
+        "line_segments": 3,
+        "arc_segments": 2,
+        "curve_segments": 0,
+        "bspline_control_points": 0,
+        "keypoints": 6,
+        "semantic_segment_count": 5,
+        "semantic_segments_line": 3,
+        "semantic_segments_arc": 2,
+        "semantic_segments_spline": 0,
+        "rmse_px": 0.3840176526891766,
+        "mean_error_px": 0.2416234746067692,
+        "max_error_px": 1.2435880655699532,
+        "reduction_ratio": 0.1206896551724138
+      }
+    ]
+  },
+  "components": [
+    {
+      "component_id": 1,
+      "component_dir": "Rebuild\\param48_hsv_probe\\intermediates\\component_001",
+      "debug_path": "Rebuild\\param48_hsv_probe\\intermediates\\component_001\\semantic_debug.json",
+      "closed": false,
+      "sampled_point_count": 24,
+      "resampled_points": [
+        [
+          187.0,
+          224.0
+        ],
+        [
+          186.0,
+          226.6218
+        ],
+        [
+          185.5348,
+          229.4652
+        ],
+        [
+          185.0,
+          232.2796
+        ],
+        [
+          185.0,
+          235.3156
+        ],
+        [
+          185.0,
+          238.3517
+        ],
+        [
+          185.0,
+          241.3877
+        ],
+        [
+          185.0,
+          244.4237
+        ],
+        [
+          185.0,
+          247.4597
+        ],
+        [
+          185.0,
+          250.4957
+        ],
+        [
+          185.0,
+          253.5318
+        ],
+        [
+          185.0,
+          256.5678
+        ],
+        [
+          185.0,
+          259.6038
+        ],
+        [
+          185.0,
+          262.6398
+        ],
+        [
+          185.0,
+          265.6758
+        ],
+        [
+          185.0,
+          268.7119
+        ],
+        [
+          185.0,
+          271.7479
+        ],
+        [
+          185.0,
+          274.7839
+        ],
+        [
+          185.0,
+          277.8199
+        ],
+        [
+          185.0,
+          280.8559
+        ],
+        [
+          185.0,
+          283.8919
+        ],
+        [
+          185.0,
+          286.928
+        ],
+        [
+          185.0,
+          289.964
+        ],
+        [
+          185.0,
+          293.0
+        ]
+      ],
+      "smoothed_points": [
+        [
+          187.0,
+          224.0
+        ],
+        [
+          186.1291,
+          226.9047
+        ],
+        [
+          185.5819,
+          229.5057
+        ],
+        [
+          185.2044,
+          232.3651
+        ],
+        [
+          185.0401,
+          235.3322
+        ],
+        [
+          185.0037,
+          238.3532
+        ],
+        [
+          185.0001,
+          241.3877
+        ],
+        [
+          185.0,
+          244.4237
+        ],
+        [
+          185.0,
+          247.4597
+        ],
+        [
+          185.0,
+          250.4957
+        ],
+        [
+          185.0,
+          253.5318
+        ],
+        [
+          185.0,
+          256.5678
+        ],
+        [
+          185.0,
+          259.6038
+        ],
+        [
+          185.0,
+          262.6398
+        ],
+        [
+          185.0,
+          265.6758
+        ],
+        [
+          185.0,
+          268.7119
+        ],
+        [
+          185.0,
+          271.7479
+        ],
+        [
+          185.0,
+          274.7839
+        ],
+        [
+          185.0,
+          277.8199
+        ],
+        [
+          185.0,
+          280.8559
+        ],
+        [
+          185.0,
+          283.8911
+        ],
+        [
+          185.0,
+          286.9069
+        ],
+        [
+          185.0,
+          289.7346
+        ],
+        [
+          185.0,
+          293.0
+        ]
+      ],
+      "raw_keypoints": [
+        0,
+        2,
+        3,
+        23
+      ],
+      "refined_keypoints": [
+        0,
+        23
+      ],
+      "keypoints": [
+        0,
+        23
+      ],
+      "global_lines": [],
+      "collapsed_full_loop_arc": false,
+      "segments": [
+        {
+          "kind": "line",
+          "start_idx": 0,
+          "end_idx": 6,
+          "effective_params": 1,
+          "max_error": 0.509,
+          "start": [
+            187.0,
+            224.0
+          ],
+          "end": [
+            185.0,
+            241.3877
+          ],
+          "segment_id": 0,
+          "type": "line",
+          "mean_error": 0.0
+        },
+        {
+          "kind": "line",
+          "start_idx": 6,
+          "end_idx": 23,
+          "effective_params": 1,
+          "max_error": 0.0001,
+          "start": [
+            185.0,
+            241.3877
+          ],
+          "end": [
+            185.0,
+            293.0
+          ],
+          "segment_id": 1,
+          "type": "line",
+          "mean_error": 0.0
+        }
+      ],
+      "debug": {
+        "initial_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 3,
+            "effective_params": 1,
+            "max_error": 0.1237,
+            "start": [
+              187.0,
+              224.0
+            ],
+            "end": [
+              185.0,
+              232.2796
+            ],
+            "sample_count": 4,
+            "mean_error": 0.1182
+          },
+          {
+            "kind": "line",
+            "start_idx": 3,
+            "end_idx": 6,
+            "effective_params": 1,
+            "max_error": 0.0549,
+            "start": [
+              185.0,
+              232.2796
+            ],
+            "end": [
+              185.0,
+              241.3877
+            ],
+            "sample_count": 4,
+            "mean_error": 0.0405
+          },
+          {
+            "kind": "line",
+            "start_idx": 6,
+            "end_idx": 23,
+            "effective_params": 1,
+            "max_error": 0.0001,
+            "start": [
+              185.0,
+              241.3877
+            ],
+            "end": [
+              185.0,
+              293.0
+            ],
+            "sample_count": 18,
+            "mean_error": 0.0
+          }
+        ],
+        "dp_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 6,
+            "effective_params": 1,
+            "max_error": 0.509,
+            "start": [
+              187.0,
+              224.0
+            ],
+            "end": [
+              185.0,
+              241.3877
+            ],
+            "sample_count": 7,
+            "mean_error": 0.2739
+          },
+          {
+            "kind": "line",
+            "start_idx": 6,
+            "end_idx": 23,
+            "effective_params": 1,
+            "max_error": 0.0001,
+            "start": [
+              185.0,
+              241.3877
+            ],
+            "end": [
+              185.0,
+              293.0
+            ],
+            "sample_count": 18,
+            "mean_error": 0.0
+          }
+        ],
+        "merged_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 6,
+            "effective_params": 1,
+            "max_error": 0.509,
+            "start": [
+              187.0,
+              224.0
+            ],
+            "end": [
+              185.0,
+              241.3877
+            ],
+            "sample_count": 7,
+            "mean_error": 0.2739
+          },
+          {
+            "kind": "line",
+            "start_idx": 6,
+            "end_idx": 23,
+            "effective_params": 1,
+            "max_error": 0.0001,
+            "start": [
+              185.0,
+              241.3877
+            ],
+            "end": [
+              185.0,
+              293.0
+            ],
+            "sample_count": 18,
+            "mean_error": 0.0
+          }
+        ],
+        "final_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 6,
+            "effective_params": 1,
+            "max_error": 0.509,
+            "start": [
+              187.0,
+              224.0
+            ],
+            "end": [
+              185.0,
+              241.3877
+            ],
+            "sample_count": 7,
+            "mean_error": 0.2739
+          },
+          {
+            "kind": "line",
+            "start_idx": 6,
+            "end_idx": 23,
+            "effective_params": 1,
+            "max_error": 0.0001,
+            "start": [
+              185.0,
+              241.3877
+            ],
+            "end": [
+              185.0,
+              293.0
+            ],
+            "sample_count": 18,
+            "mean_error": 0.0
+          }
+        ],
+        "boundary_field_weight": 0.08,
+        "boundary_field_mean": 0.18200001527459606,
+        "boundary_field_max": 0.9011318071463751
+      }
+    },
+    {
+      "component_id": 2,
+      "component_dir": "Rebuild\\param48_hsv_probe\\intermediates\\component_002",
+      "debug_path": "Rebuild\\param48_hsv_probe\\intermediates\\component_002\\semantic_debug.json",
+      "closed": false,
+      "sampled_point_count": 48,
+      "resampled_points": [
+        [
+          223.0,
+          224.0
+        ],
+        [
+          220.8269,
+          222.0
+        ],
+        [
+          217.8254,
+          222.0
+        ],
+        [
+          214.8755,
+          222.1245
+        ],
+        [
+          213.0,
+          224.3492
+        ],
+        [
+          212.0,
+          226.9365
+        ],
+        [
+          212.0,
+          229.938
+        ],
+        [
+          212.0,
+          232.9395
+        ],
+        [
+          212.0,
+          235.941
+        ],
+        [
+          212.0,
+          238.9425
+        ],
+        [
+          212.0,
+          241.9441
+        ],
+        [
+          212.0,
+          244.9456
+        ],
+        [
+          212.0,
+          247.9471
+        ],
+        [
+          212.0,
+          250.9486
+        ],
+        [
+          212.0,
+          253.9501
+        ],
+        [
+          212.0,
+          256.9516
+        ],
+        [
+          212.0,
+          259.9531
+        ],
+        [
+          212.0,
+          262.9546
+        ],
+        [
+          212.0,
+          265.9561
+        ],
+        [
+          212.0,
+          268.9577
+        ],
+        [
+          212.0,
+          271.9592
+        ],
+        [
+          212.0,
+          274.9607
+        ],
+        [
+          212.0,
+          277.9622
+        ],
+        [
+          212.0,
+          280.9637
+        ],
+        [
+          212.0,
+          283.9652
+        ],
+        [
+          212.0,
+          286.9667
+        ],
+        [
+          212.0,
+          289.9682
+        ],
+        [
+          212.0,
+          292.9698
+        ],
+        [
+          212.0,
+          295.9713
+        ],
+        [
+          212.0,
+          298.9728
+        ],
+        [
+          212.0,
+          301.9743
+        ],
+        [
+          212.0,
+          304.9758
+        ],
+        [
+          212.0,
+          307.9773
+        ],
+        [
+          212.0,
+          310.9788
+        ],
+        [
+          212.0,
+          313.9803
+        ],
+        [
+          212.0,
+          316.9819
+        ],
+        [
+          212.0,
+          319.9834
+        ],
+        [
+          212.0,
+          322.9849
+        ],
+        [
+          212.0,
+          325.9864
+        ],
+        [
+          212.0,
+          328.9879
+        ],
+        [
+          212.0,
+          331.9894
+        ],
+        [
+          212.0,
+          334.9909
+        ],
+        [
+          212.0,
+          337.9924
+        ],
+        [
+          212.0,
+          340.994
+        ],
+        [
+          212.0,
+          343.9955
+        ],
+        [
+          212.0,
+          346.997
+        ],
+        [
+          212.0,
+          349.9985
+        ],
+        [
+          212.0,
+          353.0
+        ]
+      ],
+      "smoothed_points": [
+        [
+          223.0,
+          224.0
+        ],
+        [
+          220.3549,
+          222.6442
+        ],
+        [
+          217.8551,
+          222.3466
+        ],
+        [
+          215.3604,
+          222.9874
+        ],
+        [
+          213.4945,
+          224.6804
+        ],
+        [
+          212.4592,
+          227.1382
+        ],
+        [
+          212.0819,
+          229.9724
+        ],
+        [
+          212.0072,
+          232.9425
+        ],
+        [
+          212.0003,
+          235.9411
+        ],
+        [
+          212.0,
+          238.9425
+        ],
+        [
+          212.0,
+          241.9441
+        ],
+        [
+          212.0,
+          244.9456
+        ],
+        [
+          212.0,
+          247.9471
+        ],
+        [
+          212.0,
+          250.9486
+        ],
+        [
+          212.0,
+          253.9501
+        ],
+        [
+          212.0,
+          256.9516
+        ],
+        [
+          212.0,
+          259.9531
+        ],
+        [
+          212.0,
+          262.9546
+        ],
+        [
+          212.0,
+          265.9561
+        ],
+        [
+          212.0,
+          268.9577
+        ],
+        [
+          212.0,
+          271.9592
+        ],
+        [
+          212.0,
+          274.9607
+        ],
+        [
+          212.0,
+          277.9622
+        ],
+        [
+          212.0,
+          280.9637
+        ],
+        [
+          212.0,
+          283.9652
+        ],
+        [
+          212.0,
+          286.9667
+        ],
+        [
+          212.0,
+          289.9682
+        ],
+        [
+          212.0,
+          292.9698
+        ],
+        [
+          212.0,
+          295.9713
+        ],
+        [
+          212.0,
+          298.9728
+        ],
+        [
+          212.0,
+          301.9743
+        ],
+        [
+          212.0,
+          304.9758
+        ],
+        [
+          212.0,
+          307.9773
+        ],
+        [
+          212.0,
+          310.9788
+        ],
+        [
+          212.0,
+          313.9803
+        ],
+        [
+          212.0,
+          316.9819
+        ],
+        [
+          212.0,
+          319.9834
+        ],
+        [
+          212.0,
+          322.9849
+        ],
+        [
+          212.0,
+          325.9864
+        ],
+        [
+          212.0,
+          328.9879
+        ],
+        [
+          212.0,
+          331.9894
+        ],
+        [
+          212.0,
+          334.9909
+        ],
+        [
+          212.0,
+          337.9924
+        ],
+        [
+          212.0,
+          340.994
+        ],
+        [
+          212.0,
+          343.9947
+        ],
+        [
+          212.0,
+          346.9761
+        ],
+        [
+          212.0,
+          349.7717
+        ],
+        [
+          212.0,
+          353.0
+        ]
+      ],
+      "raw_keypoints": [
+        0,
+        3,
+        7,
+        47
+      ],
+      "refined_keypoints": [
+        0,
+        5,
+        47
+      ],
+      "keypoints": [
+        0,
+        5,
+        47
+      ],
+      "global_lines": [],
+      "collapsed_full_loop_arc": false,
+      "segments": [
+        {
+          "kind": "arc",
+          "start_idx": 0,
+          "end_idx": 5,
+          "effective_params": 2,
+          "max_error": 0.1176,
+          "center": [
+            218.5251,
+            228.5348
+          ],
+          "radius": 6.2859,
+          "sweep_deg": -121.6543,
+          "segment_id": 0,
+          "type": "arc",
+          "mean_error": 0.0
+        },
+        {
+          "kind": "line",
+          "start_idx": 5,
+          "end_idx": 47,
+          "effective_params": 1,
+          "max_error": 0.4104,
+          "start": [
+            212.0,
+            226.9365
+          ],
+          "end": [
+            212.0,
+            353.0
+          ],
+          "segment_id": 1,
+          "type": "line",
+          "mean_error": 0.0
+        }
+      ],
+      "debug": {
+        "initial_segments": [
+          {
+            "kind": "arc",
+            "start_idx": 0,
+            "end_idx": 4,
+            "effective_params": 2,
+            "max_error": 0.0971,
+            "center": [
+              218.5092,
+              228.903
+            ],
+            "radius": 6.6043,
+            "sweep_deg": -92.3894,
+            "sample_count": 5,
+            "mean_error": 0.0569
+          },
+          {
+            "kind": "line",
+            "start_idx": 4,
+            "end_idx": 10,
+            "effective_params": 1,
+            "max_error": 0.6478,
+            "start": [
+              213.0,
+              224.3492
+            ],
+            "end": [
+              212.0,
+              241.9441
+            ],
+            "sample_count": 7,
+            "mean_error": 0.2953
+          },
+          {
+            "kind": "line",
+            "start_idx": 10,
+            "end_idx": 47,
+            "effective_params": 1,
+            "max_error": 0.0,
+            "start": [
+              212.0,
+              241.9441
+            ],
+            "end": [
+              212.0,
+              353.0
+            ],
+            "sample_count": 38,
+            "mean_error": 0.0
+          }
+        ],
+        "dp_segments": [
+          {
+            "kind": "arc",
+            "start_idx": 0,
+            "end_idx": 5,
+            "effective_params": 2,
+            "max_error": 0.1176,
+            "center": [
+              218.5251,
+              228.5348
+            ],
+            "radius": 6.2859,
+            "sweep_deg": -121.6543,
+            "sample_count": 6,
+            "mean_error": 0.0796
+          },
+          {
+            "kind": "line",
+            "start_idx": 5,
+            "end_idx": 47,
+            "effective_params": 1,
+            "max_error": 0.4104,
+            "start": [
+              212.0,
+              226.9365
+            ],
+            "end": [
+              212.0,
+              353.0
+            ],
+            "sample_count": 43,
+            "mean_error": 0.0287
+          }
+        ],
+        "merged_segments": [
+          {
+            "kind": "arc",
+            "start_idx": 0,
+            "end_idx": 5,
+            "effective_params": 2,
+            "max_error": 0.1176,
+            "center": [
+              218.5251,
+              228.5348
+            ],
+            "radius": 6.2859,
+            "sweep_deg": -121.6543,
+            "sample_count": 6,
+            "mean_error": 0.0796
+          },
+          {
+            "kind": "line",
+            "start_idx": 5,
+            "end_idx": 47,
+            "effective_params": 1,
+            "max_error": 0.4104,
+            "start": [
+              212.0,
+              226.9365
+            ],
+            "end": [
+              212.0,
+              353.0
+            ],
+            "sample_count": 43,
+            "mean_error": 0.0287
+          }
+        ],
+        "final_segments": [
+          {
+            "kind": "arc",
+            "start_idx": 0,
+            "end_idx": 5,
+            "effective_params": 2,
+            "max_error": 0.1176,
+            "center": [
+              218.5251,
+              228.5348
+            ],
+            "radius": 6.2859,
+            "sweep_deg": -121.6543,
+            "sample_count": 6,
+            "mean_error": 0.0796
+          },
+          {
+            "kind": "line",
+            "start_idx": 5,
+            "end_idx": 47,
+            "effective_params": 1,
+            "max_error": 0.4104,
+            "start": [
+              212.0,
+              226.9365
+            ],
+            "end": [
+              212.0,
+              353.0
+            ],
+            "sample_count": 43,
+            "mean_error": 0.0287
+          }
+        ],
+        "boundary_field_weight": 0.08,
+        "boundary_field_mean": 0.14593468288959835,
+        "boundary_field_max": 0.9984539737953514
+      }
+    },
+    {
+      "component_id": 3,
+      "component_dir": "Rebuild\\param48_hsv_probe\\intermediates\\component_003",
+      "debug_path": "Rebuild\\param48_hsv_probe\\intermediates\\component_003\\semantic_debug.json",
+      "closed": false,
+      "sampled_point_count": 48,
+      "resampled_points": [
+        [
+          197.0,
+          225.0
+        ],
+        [
+          197.0,
+          228.0301
+        ],
+        [
+          197.0,
+          231.0602
+        ],
+        [
+          197.0,
+          234.0903
+        ],
+        [
+          197.0,
+          237.1204
+        ],
+        [
+          197.0,
+          240.1504
+        ],
+        [
+          197.0,
+          243.1805
+        ],
+        [
+          197.0,
+          246.2106
+        ],
+        [
+          197.0,
+          249.2407
+        ],
+        [
+          197.0,
+          252.2708
+        ],
+        [
+          197.0,
+          255.3009
+        ],
+        [
+          197.0,
+          258.331
+        ],
+        [
+          197.0,
+          261.3611
+        ],
+        [
+          197.0,
+          264.3912
+        ],
+        [
+          197.0,
+          267.4213
+        ],
+        [
+          197.0,
+          270.4513
+        ],
+        [
+          197.0,
+          273.4814
+        ],
+        [
+          197.0,
+          276.5115
+        ],
+        [
+          197.0,
+          279.5416
+        ],
+        [
+          197.0,
+          282.5717
+        ],
+        [
+          197.0,
+          285.6018
+        ],
+        [
+          197.0,
+          288.6319
+        ],
+        [
+          197.0,
+          291.662
+        ],
+        [
+          197.0,
+          294.6921
+        ],
+        [
+          197.0,
+          297.7222
+        ],
+        [
+          197.0,
+          300.7522
+        ],
+        [
+          197.0,
+          303.7823
+        ],
+        [
+          197.0,
+          306.8124
+        ],
+        [
+          197.0,
+          309.8425
+        ],
+        [
+          197.0,
+          312.8726
+        ],
+        [
+          197.0,
+          315.9027
+        ],
+        [
+          197.0,
+          318.9328
+        ],
+        [
+          197.0,
+          321.9629
+        ],
+        [
+          197.0,
+          324.993
+        ],
+        [
+          197.0,
+          328.023
+        ],
+        [
+          197.0,
+          331.0531
+        ],
+        [
+          197.0,
+          334.0832
+        ],
+        [
+          197.0,
+          337.1133
+        ],
+        [
+          197.0,
+          340.1434
+        ],
+        [
+          197.0,
+          343.1735
+        ],
+        [
+          197.0,
+          346.2036
+        ],
+        [
+          197.0,
+          349.2337
+        ],
+        [
+          197.0,
+          352.2638
+        ],
+        [
+          198.8796,
+          354.0
+        ],
+        [
+          201.9097,
+          354.0
+        ],
+        [
+          204.9398,
+          354.0
+        ],
+        [
+          207.9699,
+          354.0
+        ],
+        [
+          211.0,
+          354.0
+        ]
+      ],
+      "smoothed_points": [
+        [
+          197.0,
+          225.0
+        ],
+        [
+          197.0,
+          228.259
+        ],
+        [
+          197.0,
+          231.0812
+        ],
+        [
+          197.0,
+          234.0911
+        ],
+        [
+          197.0,
+          237.1204
+        ],
+        [
+          197.0,
+          240.1504
+        ],
+        [
+          197.0,
+          243.1805
+        ],
+        [
+          197.0,
+          246.2106
+        ],
+        [
+          197.0,
+          249.2407
+        ],
+        [
+          197.0,
+          252.2708
+        ],
+        [
+          197.0,
+          255.3009
+        ],
+        [
+          197.0,
+          258.331
+        ],
+        [
+          197.0,
+          261.3611
+        ],
+        [
+          197.0,
+          264.3912
+        ],
+        [
+          197.0,
+          267.4213
+        ],
+        [
+          197.0,
+          270.4513
+        ],
+        [
+          197.0,
+          273.4814
+        ],
+        [
+          197.0,
+          276.5115
+        ],
+        [
+          197.0,
+          279.5416
+        ],
+        [
+          197.0,
+          282.5717
+        ],
+        [
+          197.0,
+          285.6018
+        ],
+        [
+          197.0,
+          288.6319
+        ],
+        [
+          197.0,
+          291.662
+        ],
+        [
+          197.0,
+          294.6921
+        ],
+        [
+          197.0,
+          297.7222
+        ],
+        [
+          197.0,
+          300.7522
+        ],
+        [
+          197.0,
+          303.7823
+        ],
+        [
+          197.0,
+          306.8124
+        ],
+        [
+          197.0,
+          309.8425
+        ],
+        [
+          197.0,
+          312.8726
+        ],
+        [
+          197.0,
+          315.9027
+        ],
+        [
+          197.0,
+          318.9328
+        ],
+        [
+          197.0,
+          321.9629
+        ],
+        [
+          197.0,
+          324.993
+        ],
+        [
+          197.0,
+          328.023
+        ],
+        [
+          197.0,
+          331.0531
+        ],
+        [
+          197.0,
+          334.0832
+        ],
+        [
+          197.0,
+          337.1133
+        ],
+        [
+          197.0,
+          340.1434
+        ],
+        [
+          197.0005,
+          343.1731
+        ],
+        [
+          197.0134,
+          346.1941
+        ],
+        [
+          197.15,
+          349.1238
+        ],
+        [
+          197.8117,
+          351.6337
+        ],
+        [
+          199.4653,
+          353.2328
+        ],
+        [
+          202.0089,
+          353.8598
+        ],
+        [
+          204.9273,
+          353.9876
+        ],
+        [
+          207.7413,
+          353.9995
+        ],
+        [
+          211.0,
+          354.0
+        ]
+      ],
+      "raw_keypoints": [
+        0,
+        40,
+        42,
+        47
+      ],
+      "refined_keypoints": [
+        0,
+        47
+      ],
+      "keypoints": [
+        0,
+        47
+      ],
+      "global_lines": [],
+      "collapsed_full_loop_arc": false,
+      "segments": [
+        {
+          "kind": "line",
+          "start_idx": 0,
+          "end_idx": 38,
+          "effective_params": 1,
+          "max_error": 0.0,
+          "start": [
+            197.0,
+            225.0
+          ],
+          "end": [
+            197.0,
+            340.1434
+          ],
+          "segment_id": 0,
+          "type": "line",
+          "mean_error": 0.0
+        },
+        {
+          "kind": "arc",
+          "start_idx": 38,
+          "end_idx": 47,
+          "effective_params": 2,
+          "max_error": 0.7567,
+          "center": [
+            205.7174,
+            345.2992
+          ],
+          "radius": 9.4809,
+          "sweep_deg": -151.8647,
+          "segment_id": 1,
+          "type": "arc",
+          "mean_error": 0.0
+        }
+      ],
+      "debug": {
+        "initial_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 38,
+            "effective_params": 1,
+            "max_error": 0.0,
+            "start": [
+              197.0,
+              225.0
+            ],
+            "end": [
+              197.0,
+              340.1434
+            ],
+            "sample_count": 39,
+            "mean_error": 0.0
+          },
+          {
+            "kind": "line",
+            "start_idx": 38,
+            "end_idx": 43,
+            "effective_params": 1,
+            "max_error": 0.9902,
+            "start": [
+              197.0,
+              340.1434
+            ],
+            "end": [
+              198.8796,
+              354.0
+            ],
+            "sample_count": 6,
+            "mean_error": 0.501
+          },
+          {
+            "kind": "line",
+            "start_idx": 43,
+            "end_idx": 47,
+            "effective_params": 1,
+            "max_error": 0.268,
+            "start": [
+              198.8796,
+              354.0
+            ],
+            "end": [
+              211.0,
+              354.0
+            ],
+            "sample_count": 5,
+            "mean_error": 0.1686
+          }
+        ],
+        "dp_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 38,
+            "effective_params": 1,
+            "max_error": 0.0,
+            "start": [
+              197.0,
+              225.0
+            ],
+            "end": [
+              197.0,
+              340.1434
+            ],
+            "sample_count": 39,
+            "mean_error": 0.0
+          },
+          {
+            "kind": "arc",
+            "start_idx": 38,
+            "end_idx": 47,
+            "effective_params": 2,
+            "max_error": 0.7567,
+            "center": [
+              205.7174,
+              345.2992
+            ],
+            "radius": 9.4809,
+            "sweep_deg": -151.8647,
+            "sample_count": 10,
+            "mean_error": 0.5409
+          }
+        ],
+        "merged_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 38,
+            "effective_params": 1,
+            "max_error": 0.0,
+            "start": [
+              197.0,
+              225.0
+            ],
+            "end": [
+              197.0,
+              340.1434
+            ],
+            "sample_count": 39,
+            "mean_error": 0.0
+          },
+          {
+            "kind": "arc",
+            "start_idx": 38,
+            "end_idx": 47,
+            "effective_params": 2,
+            "max_error": 0.7567,
+            "center": [
+              205.7174,
+              345.2992
+            ],
+            "radius": 9.4809,
+            "sweep_deg": -151.8647,
+            "sample_count": 10,
+            "mean_error": 0.5409
+          }
+        ],
+        "final_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 38,
+            "effective_params": 1,
+            "max_error": 0.0,
+            "start": [
+              197.0,
+              225.0
+            ],
+            "end": [
+              197.0,
+              340.1434
+            ],
+            "sample_count": 39,
+            "mean_error": 0.0
+          },
+          {
+            "kind": "arc",
+            "start_idx": 38,
+            "end_idx": 47,
+            "effective_params": 2,
+            "max_error": 0.7567,
+            "center": [
+              205.7174,
+              345.2992
+            ],
+            "radius": 9.4809,
+            "sweep_deg": -151.8647,
+            "sample_count": 10,
+            "mean_error": 0.5409
+          }
+        ],
+        "boundary_field_weight": 0.08,
+        "boundary_field_mean": 0.15935705703451358,
+        "boundary_field_max": 0.9980835783468976
+      }
+    },
+    {
+      "component_id": 4,
+      "component_dir": "Rebuild\\param48_hsv_probe\\intermediates\\component_004",
+      "debug_path": "Rebuild\\param48_hsv_probe\\intermediates\\component_004\\semantic_debug.json",
+      "closed": false,
+      "sampled_point_count": 27,
+      "resampled_points": [
+        [
+          224.0,
+          226.0
+        ],
+        [
+          224.0,
+          229.0027
+        ],
+        [
+          224.0,
+          232.0055
+        ],
+        [
+          224.0,
+          235.0082
+        ],
+        [
+          224.0,
+          238.0109
+        ],
+        [
+          224.0,
+          241.0137
+        ],
+        [
+          223.0,
+          243.6022
+        ],
+        [
+          223.0,
+          246.6049
+        ],
+        [
+          224.0,
+          249.1934
+        ],
+        [
+          224.0,
+          252.1962
+        ],
+        [
+          224.0,
+          255.1989
+        ],
+        [
+          224.0,
+          258.2016
+        ],
+        [
+          224.0,
+          261.2044
+        ],
+        [
+          224.0,
+          264.2071
+        ],
+        [
+          224.0,
+          267.2098
+        ],
+        [
+          224.0,
+          270.2126
+        ],
+        [
+          224.0,
+          273.2153
+        ],
+        [
+          223.8458,
+          276.1542
+        ],
+        [
+          223.0,
+          278.8066
+        ],
+        [
+          223.5723,
+          281.5723
+        ],
+        [
+          224.0,
+          284.3978
+        ],
+        [
+          224.0,
+          287.4005
+        ],
+        [
+          224.0,
+          290.4033
+        ],
+        [
+          224.2871,
+          293.2871
+        ],
+        [
+          226.9945,
+          294.0
+        ],
+        [
+          229.9973,
+          294.0
+        ],
+        [
+          233.0,
+          294.0
+        ]
+      ],
+      "smoothed_points": [
+        [
+          224.0,
+          226.0
+        ],
+        [
+          224.0,
+          229.2296
+        ],
+        [
+          223.9997,
+          232.0262
+        ],
+        [
+          223.9933,
+          235.0062
+        ],
+        [
+          223.9317,
+          237.9824
+        ],
+        [
+          223.6967,
+          240.8825
+        ],
+        [
+          223.3786,
+          243.7022
+        ],
+        [
+          223.3786,
+          246.5049
+        ],
+        [
+          223.6967,
+          249.3246
+        ],
+        [
+          223.9317,
+          252.2247
+        ],
+        [
+          223.9933,
+          255.2017
+        ],
+        [
+          223.9997,
+          258.2018
+        ],
+        [
+          224.0,
+          261.2044
+        ],
+        [
+          224.0,
+          264.2071
+        ],
+        [
+          223.9987,
+          267.2093
+        ],
+        [
+          223.9839,
+          270.2058
+        ],
+        [
+          223.8981,
+          273.1698
+        ],
+        [
+          223.6735,
+          276.0479
+        ],
+        [
+          223.4796,
+          278.8339
+        ],
+        [
+          223.5866,
+          281.6152
+        ],
+        [
+          223.8365,
+          284.47
+        ],
+        [
+          224.0056,
+          287.3901
+        ],
+        [
+          224.2926,
+          290.1897
+        ],
+        [
+          225.2634,
+          292.3872
+        ],
+        [
+          227.2724,
+          293.5603
+        ],
+        [
+          229.8096,
+          293.931
+        ],
+        [
+          233.0,
+          294.0
+        ]
+      ],
+      "raw_keypoints": [
+        0,
+        4,
+        23,
+        26
+      ],
+      "refined_keypoints": [
+        0,
+        26
+      ],
+      "keypoints": [
+        0,
+        26
+      ],
+      "global_lines": [],
+      "collapsed_full_loop_arc": false,
+      "segments": [
+        {
+          "kind": "line",
+          "start_idx": 0,
+          "end_idx": 20,
+          "effective_params": 1,
+          "max_error": 0.4811,
+          "start": [
+            224.0,
+            226.0
+          ],
+          "end": [
+            224.0,
+            284.3978
+          ],
+          "segment_id": 0,
+          "type": "line",
+          "mean_error": 0.0
+        },
+        {
+          "kind": "arc",
+          "start_idx": 20,
+          "end_idx": 26,
+          "effective_params": 2,
+          "max_error": 0.4535,
+          "center": [
+            230.5699,
+            287.2761
+          ],
+          "radius": 7.0188,
+          "sweep_deg": -132.4937,
+          "segment_id": 1,
+          "type": "arc",
+          "mean_error": 0.0
+        }
+      ],
+      "debug": {
+        "initial_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 20,
+            "effective_params": 1,
+            "max_error": 0.4811,
+            "start": [
+              224.0,
+              226.0
+            ],
+            "end": [
+              224.0,
+              284.3978
+            ],
+            "sample_count": 21,
+            "mean_error": 0.1769
+          },
+          {
+            "kind": "arc",
+            "start_idx": 20,
+            "end_idx": 26,
+            "effective_params": 2,
+            "max_error": 0.4535,
+            "center": [
+              230.5699,
+              287.2761
+            ],
+            "radius": 7.0188,
+            "sweep_deg": -132.4937,
+            "sample_count": 7,
+            "mean_error": 0.2437
+          }
+        ],
+        "dp_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 20,
+            "effective_params": 1,
+            "max_error": 0.4811,
+            "start": [
+              224.0,
+              226.0
+            ],
+            "end": [
+              224.0,
+              284.3978
+            ],
+            "sample_count": 21,
+            "mean_error": 0.1769
+          },
+          {
+            "kind": "arc",
+            "start_idx": 20,
+            "end_idx": 26,
+            "effective_params": 2,
+            "max_error": 0.4535,
+            "center": [
+              230.5699,
+              287.2761
+            ],
+            "radius": 7.0188,
+            "sweep_deg": -132.4937,
+            "sample_count": 7,
+            "mean_error": 0.2437
+          }
+        ],
+        "merged_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 20,
+            "effective_params": 1,
+            "max_error": 0.4811,
+            "start": [
+              224.0,
+              226.0
+            ],
+            "end": [
+              224.0,
+              284.3978
+            ],
+            "sample_count": 21,
+            "mean_error": 0.1769
+          },
+          {
+            "kind": "arc",
+            "start_idx": 20,
+            "end_idx": 26,
+            "effective_params": 2,
+            "max_error": 0.4535,
+            "center": [
+              230.5699,
+              287.2761
+            ],
+            "radius": 7.0188,
+            "sweep_deg": -132.4937,
+            "sample_count": 7,
+            "mean_error": 0.2437
+          }
+        ],
+        "final_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 20,
+            "effective_params": 1,
+            "max_error": 0.4811,
+            "start": [
+              224.0,
+              226.0
+            ],
+            "end": [
+              224.0,
+              284.3978
+            ],
+            "sample_count": 21,
+            "mean_error": 0.1769
+          },
+          {
+            "kind": "arc",
+            "start_idx": 20,
+            "end_idx": 26,
+            "effective_params": 2,
+            "max_error": 0.4535,
+            "center": [
+              230.5699,
+              287.2761
+            ],
+            "radius": 7.0188,
+            "sweep_deg": -132.4937,
+            "sample_count": 7,
+            "mean_error": 0.2437
+          }
+        ],
+        "boundary_field_weight": 0.08,
+        "boundary_field_mean": 0.24177928103103,
+        "boundary_field_max": 0.9088493612405102
+      }
+    },
+    {
+      "component_id": 5,
+      "component_dir": "Rebuild\\param48_hsv_probe\\intermediates\\component_005",
+      "debug_path": "Rebuild\\param48_hsv_probe\\intermediates\\component_005\\semantic_debug.json",
+      "closed": false,
+      "sampled_point_count": 49,
+      "resampled_points": [
+        [
+          164.0,
+          289.0
+        ],
+        [
+          164.0,
+          285.9396
+        ],
+        [
+          164.0,
+          282.8792
+        ],
+        [
+          164.0,
+          279.8188
+        ],
+        [
+          164.0,
+          276.7584
+        ],
+        [
+          164.0,
+          273.698
+        ],
+        [
+          164.0,
+          270.6376
+        ],
+        [
+          164.0,
+          267.5772
+        ],
+        [
+          164.0,
+          264.5168
+        ],
+        [
+          164.0,
+          261.4563
+        ],
+        [
+          164.0,
+          258.3959
+        ],
+        [
+          164.0,
+          255.3355
+        ],
+        [
+          164.0,
+          252.2751
+        ],
+        [
+          164.0,
+          249.2147
+        ],
+        [
+          164.0,
+          246.1543
+        ],
+        [
+          164.0,
+          243.0939
+        ],
+        [
+          164.0,
+          240.0335
+        ],
+        [
+          164.0,
+          236.9731
+        ],
+        [
+          164.0,
+          233.9127
+        ],
+        [
+          164.0,
+          230.8523
+        ],
+        [
+          164.8543,
+          228.1457
+        ],
+        [
+          167.4401,
+          227.0
+        ],
+        [
+          170.0863,
+          226.0
+        ],
+        [
+          172.7325,
+          227.0
+        ],
+        [
+          174.0,
+          229.3787
+        ],
+        [
+          174.0,
+          232.4391
+        ],
+        [
+          174.0,
+          235.4995
+        ],
+        [
+          174.0,
+          238.5599
+        ],
+        [
+          174.0,
+          241.6203
+        ],
+        [
+          174.4813,
+          244.4813
+        ],
+        [
+          175.0,
+          247.3269
+        ],
+        [
+          175.0,
+          250.3873
+        ],
+        [
+          175.0,
+          253.4477
+        ],
+        [
+          175.0,
+          256.5081
+        ],
+        [
+          175.0,
+          259.5685
+        ],
+        [
+          175.0,
+          262.6289
+        ],
+        [
+          175.0,
+          265.6893
+        ],
+        [
+          175.0,
+          268.7497
+        ],
+        [
+          175.0,
+          271.8102
+        ],
+        [
+          175.0,
+          274.8706
+        ],
+        [
+          175.0,
+          277.931
+        ],
+        [
+          175.0,
+          280.9914
+        ],
+        [
+          175.0,
+          284.0518
+        ],
+        [
+          175.0,
+          287.1122
+        ],
+        [
+          175.0,
+          290.1726
+        ],
+        [
+          175.1648,
+          293.1648
+        ],
+        [
+          177.8792,
+          294.0
+        ],
+        [
+          180.9396,
+          294.0
+        ],
+        [
+          184.0,
+          294.0
+        ]
+      ],
+      "smoothed_points": [
+        [
+          164.0,
+          289.0
+        ],
+        [
+          164.0,
+          285.7084
+        ],
+        [
+          164.0,
+          282.8579
+        ],
+        [
+          164.0,
+          279.818
+        ],
+        [
+          164.0,
+          276.7584
+        ],
+        [
+          164.0,
+          273.698
+        ],
+        [
+          164.0,
+          270.6376
+        ],
+        [
+          164.0,
+          267.5772
+        ],
+        [
+          164.0,
+          264.5168
+        ],
+        [
+          164.0,
+          261.4563
+        ],
+        [
+          164.0,
+          258.3959
+        ],
+        [
+          164.0,
+          255.3355
+        ],
+        [
+          164.0,
+          252.2751
+        ],
+        [
+          164.0,
+          249.2147
+        ],
+        [
+          164.0,
+          246.1543
+        ],
+        [
+          164.0,
+          243.0939
+        ],
+        [
+          164.0002,
+          240.0336
+        ],
+        [
+          164.0064,
+          236.976
+        ],
+        [
+          164.0766,
+          233.9503
+        ],
+        [
+          164.4607,
+          231.1082
+        ],
+        [
+          165.5907,
+          228.7996
+        ],
+        [
+          167.5902,
+          227.3375
+        ],
+        [
+          169.9901,
+          226.902
+        ],
+        [
+          172.106,
+          227.7357
+        ],
+        [
+          173.4071,
+          229.7597
+        ],
+        [
+          173.8948,
+          232.5007
+        ],
+        [
+          173.9942,
+          235.5032
+        ],
+        [
+          174.0361,
+          238.545
+        ],
+        [
+          174.1848,
+          241.5438
+        ],
+        [
+          174.4929,
+          244.4765
+        ],
+        [
+          174.8062,
+          247.4072
+        ],
+        [
+          174.9612,
+          250.4034
+        ],
+        [
+          174.9964,
+          253.4492
+        ],
+        [
+          174.9999,
+          256.5082
+        ],
+        [
+          175.0,
+          259.5685
+        ],
+        [
+          175.0,
+          262.6289
+        ],
+        [
+          175.0,
+          265.6893
+        ],
+        [
+          175.0,
+          268.7497
+        ],
+        [
+          175.0,
+          271.8102
+        ],
+        [
+          175.0,
+          274.8706
+        ],
+        [
+          175.0,
+          277.931
+        ],
+        [
+          175.0,
+          280.9914
+        ],
+        [
+          175.0018,
+          284.0507
+        ],
+        [
+          175.0303,
+          287.0918
+        ],
+        [
+          175.2586,
+          289.9775
+        ],
+        [
+          176.1856,
+          292.2648
+        ],
+        [
+          178.1851,
+          293.5145
+        ],
+        [
+          180.7523,
+          293.9219
+        ],
+        [
+          184.0,
+          294.0
+        ]
+      ],
+      "raw_keypoints": [
+        0,
+        22,
+        45,
+        48
+      ],
+      "refined_keypoints": [
+        0,
+        22,
+        48
+      ],
+      "keypoints": [
+        0,
+        22,
+        48
+      ],
+      "global_lines": [],
+      "collapsed_full_loop_arc": false,
+      "segments": [
+        {
+          "kind": "line",
+          "start_idx": 0,
+          "end_idx": 15,
+          "effective_params": 1,
+          "max_error": 0.0,
+          "start": [
+            164.0,
+            289.0
+          ],
+          "end": [
+            164.0,
+            243.0939
+          ],
+          "segment_id": 0,
+          "type": "line",
+          "mean_error": 0.0
+        },
+        {
+          "kind": "arc",
+          "start_idx": 15,
+          "end_idx": 22,
+          "effective_params": 2,
+          "max_error": 0.8837,
+          "center": [
+            174.4176,
+            236.8102
+          ],
+          "radius": 11.2823,
+          "sweep_deg": 97.0201,
+          "segment_id": 1,
+          "type": "arc",
+          "mean_error": 0.0
+        },
+        {
+          "kind": "arc",
+          "start_idx": 22,
+          "end_idx": 41,
+          "effective_params": 2,
+          "max_error": 1.479,
+          "center": [
+            65.8926,
+            258.5304
+          ],
+          "radius": 109.9164,
+          "sweep_deg": 28.533,
+          "segment_id": 2,
+          "type": "arc",
+          "mean_error": 0.0
+        },
+        {
+          "kind": "arc",
+          "start_idx": 41,
+          "end_idx": 48,
+          "effective_params": 2,
+          "max_error": 0.8096,
+          "center": [
+            182.3245,
+            286.0799
+          ],
+          "radius": 8.1738,
+          "sweep_deg": -136.7334,
+          "segment_id": 3,
+          "type": "arc",
+          "mean_error": 0.0
+        }
+      ],
+      "debug": {
+        "initial_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 15,
+            "effective_params": 1,
+            "max_error": 0.0,
+            "start": [
+              164.0,
+              289.0
+            ],
+            "end": [
+              164.0,
+              243.0939
+            ],
+            "sample_count": 16,
+            "mean_error": 0.0
+          },
+          {
+            "kind": "arc",
+            "start_idx": 15,
+            "end_idx": 22,
+            "effective_params": 2,
+            "max_error": 0.8837,
+            "center": [
+              174.4176,
+              236.8102
+            ],
+            "radius": 11.2823,
+            "sweep_deg": 97.0201,
+            "sample_count": 8,
+            "mean_error": 0.5422
+          },
+          {
+            "kind": "arc",
+            "start_idx": 22,
+            "end_idx": 29,
+            "effective_params": 2,
+            "max_error": 1.0698,
+            "center": [
+              160.1115,
+              237.6142
+            ],
+            "radius": 14.865,
+            "sweep_deg": 72.8271,
+            "sample_count": 8,
+            "mean_error": 0.5954
+          },
+          {
+            "kind": "line",
+            "start_idx": 29,
+            "end_idx": 41,
+            "effective_params": 1,
+            "max_error": 0.3138,
+            "start": [
+              174.4813,
+              244.4813
+            ],
+            "end": [
+              175.0,
+              280.9914
+            ],
+            "sample_count": 13,
+            "mean_error": 0.0799
+          },
+          {
+            "kind": "arc",
+            "start_idx": 41,
+            "end_idx": 48,
+            "effective_params": 2,
+            "max_error": 0.8096,
+            "center": [
+              182.3245,
+              286.0799
+            ],
+            "radius": 8.1738,
+            "sweep_deg": -136.7334,
+            "sample_count": 8,
+            "mean_error": 0.4205
+          }
+        ],
+        "dp_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 15,
+            "effective_params": 1,
+            "max_error": 0.0,
+            "start": [
+              164.0,
+              289.0
+            ],
+            "end": [
+              164.0,
+              243.0939
+            ],
+            "sample_count": 16,
+            "mean_error": 0.0
+          },
+          {
+            "kind": "arc",
+            "start_idx": 15,
+            "end_idx": 22,
+            "effective_params": 2,
+            "max_error": 0.8837,
+            "center": [
+              174.4176,
+              236.8102
+            ],
+            "radius": 11.2823,
+            "sweep_deg": 97.0201,
+            "sample_count": 8,
+            "mean_error": 0.5422
+          },
+          {
+            "kind": "arc",
+            "start_idx": 22,
+            "end_idx": 41,
+            "effective_params": 2,
+            "max_error": 1.479,
+            "center": [
+              65.8926,
+              258.5304
+            ],
+            "radius": 109.9164,
+            "sweep_deg": 28.533,
+            "sample_count": 20,
+            "mean_error": 0.6716
+          },
+          {
+            "kind": "arc",
+            "start_idx": 41,
+            "end_idx": 48,
+            "effective_params": 2,
+            "max_error": 0.8096,
+            "center": [
+              182.3245,
+              286.0799
+            ],
+            "radius": 8.1738,
+            "sweep_deg": -136.7334,
+            "sample_count": 8,
+            "mean_error": 0.4205
+          }
+        ],
+        "merged_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 15,
+            "effective_params": 1,
+            "max_error": 0.0,
+            "start": [
+              164.0,
+              289.0
+            ],
+            "end": [
+              164.0,
+              243.0939
+            ],
+            "sample_count": 16,
+            "mean_error": 0.0
+          },
+          {
+            "kind": "arc",
+            "start_idx": 15,
+            "end_idx": 22,
+            "effective_params": 2,
+            "max_error": 0.8837,
+            "center": [
+              174.4176,
+              236.8102
+            ],
+            "radius": 11.2823,
+            "sweep_deg": 97.0201,
+            "sample_count": 8,
+            "mean_error": 0.5422
+          },
+          {
+            "kind": "arc",
+            "start_idx": 22,
+            "end_idx": 41,
+            "effective_params": 2,
+            "max_error": 1.479,
+            "center": [
+              65.8926,
+              258.5304
+            ],
+            "radius": 109.9164,
+            "sweep_deg": 28.533,
+            "sample_count": 20,
+            "mean_error": 0.6716
+          },
+          {
+            "kind": "arc",
+            "start_idx": 41,
+            "end_idx": 48,
+            "effective_params": 2,
+            "max_error": 0.8096,
+            "center": [
+              182.3245,
+              286.0799
+            ],
+            "radius": 8.1738,
+            "sweep_deg": -136.7334,
+            "sample_count": 8,
+            "mean_error": 0.4205
+          }
+        ],
+        "final_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 15,
+            "effective_params": 1,
+            "max_error": 0.0,
+            "start": [
+              164.0,
+              289.0
+            ],
+            "end": [
+              164.0,
+              243.0939
+            ],
+            "sample_count": 16,
+            "mean_error": 0.0
+          },
+          {
+            "kind": "arc",
+            "start_idx": 15,
+            "end_idx": 22,
+            "effective_params": 2,
+            "max_error": 0.8837,
+            "center": [
+              174.4176,
+              236.8102
+            ],
+            "radius": 11.2823,
+            "sweep_deg": 97.0201,
+            "sample_count": 8,
+            "mean_error": 0.5422
+          },
+          {
+            "kind": "arc",
+            "start_idx": 22,
+            "end_idx": 41,
+            "effective_params": 2,
+            "max_error": 1.479,
+            "center": [
+              65.8926,
+              258.5304
+            ],
+            "radius": 109.9164,
+            "sweep_deg": 28.533,
+            "sample_count": 20,
+            "mean_error": 0.6716
+          },
+          {
+            "kind": "arc",
+            "start_idx": 41,
+            "end_idx": 48,
+            "effective_params": 2,
+            "max_error": 0.8096,
+            "center": [
+              182.3245,
+              286.0799
+            ],
+            "radius": 8.1738,
+            "sweep_deg": -136.7334,
+            "sample_count": 8,
+            "mean_error": 0.4205
+          }
+        ],
+        "boundary_field_weight": 0.08,
+        "boundary_field_mean": 0.25319554695495594,
+        "boundary_field_max": 0.9986896729225138
+      }
+    },
+    {
+      "component_id": 6,
+      "component_dir": "Rebuild\\param48_hsv_probe\\intermediates\\component_006",
+      "debug_path": "Rebuild\\param48_hsv_probe\\intermediates\\component_006\\semantic_debug.json",
+      "closed": false,
+      "sampled_point_count": 148,
+      "resampled_points": [
+        [
+          280.0,
+          289.0
+        ],
+        [
+          280.0,
+          285.9899
+        ],
+        [
+          280.0,
+          282.9798
+        ],
+        [
+          280.0,
+          279.9697
+        ],
+        [
+          280.0,
+          276.9596
+        ],
+        [
+          280.0,
+          273.9495
+        ],
+        [
+          280.0,
+          270.9394
+        ],
+        [
+          280.0,
+          267.9293
+        ],
+        [
+          280.0,
+          264.9192
+        ],
+        [
+          280.0,
+          261.9091
+        ],
+        [
+          280.0,
+          258.899
+        ],
+        [
+          280.0,
+          255.8889
+        ],
+        [
+          280.0,
+          252.8788
+        ],
+        [
+          280.0,
+          249.8686
+        ],
+        [
+          280.0,
+          246.8585
+        ],
+        [
+          280.0,
+          243.8484
+        ],
+        [
+          280.0,
+          240.8383
+        ],
+        [
+          280.0,
+          237.8282
+        ],
+        [
+          280.0,
+          234.8181
+        ],
+        [
+          280.0,
+          231.808
+        ],
+        [
+          280.0,
+          228.7979
+        ],
+        [
+          280.0,
+          225.7878
+        ],
+        [
+          280.0,
+          222.7777
+        ],
+        [
+          280.0,
+          219.7676
+        ],
+        [
+          280.0,
+          216.7575
+        ],
+        [
+          280.0,
+          213.7474
+        ],
+        [
+          280.0,
+          210.7373
+        ],
+        [
+          280.0,
+          207.7272
+        ],
+        [
+          280.0,
+          204.7171
+        ],
+        [
+          280.0,
+          201.707
+        ],
+        [
+          280.0,
+          198.6969
+        ],
+        [
+          280.0,
+          195.6868
+        ],
+        [
+          280.0,
+          192.6767
+        ],
+        [
+          280.0,
+          189.6666
+        ],
+        [
+          280.0,
+          186.6565
+        ],
+        [
+          280.0,
+          183.6464
+        ],
+        [
+          280.0,
+          180.6363
+        ],
+        [
+          280.0,
+          177.6262
+        ],
+        [
+          280.0,
+          174.616
+        ],
+        [
+          280.0,
+          171.6059
+        ],
+        [
+          280.0,
+          168.5958
+        ],
+        [
+          280.0,
+          165.5857
+        ],
+        [
+          280.0,
+          162.5756
+        ],
+        [
+          278.9797,
+          160.0
+        ],
+        [
+          275.9696,
+          160.0
+        ],
+        [
+          272.9595,
+          160.0
+        ],
+        [
+          269.9494,
+          160.0
+        ],
+        [
+          266.9393,
+          160.0
+        ],
+        [
+          263.9292,
+          160.0
+        ],
+        [
+          260.9191,
+          160.0
+        ],
+        [
+          257.909,
+          160.0
+        ],
+        [
+          254.8989,
+          160.0
+        ],
+        [
+          251.8888,
+          160.0
+        ],
+        [
+          248.8787,
+          160.0
+        ],
+        [
+          245.8686,
+          160.0
+        ],
+        [
+          242.8585,
+          160.0
+        ],
+        [
+          239.8484,
+          160.0
+        ],
+        [
+          236.8383,
+          160.0
+        ],
+        [
+          233.8282,
+          160.0
+        ],
+        [
+          230.8181,
+          160.0
+        ],
+        [
+          227.808,
+          160.0
+        ],
+        [
+          224.7979,
+          160.0
+        ],
+        [
+          221.7878,
+          160.0
+        ],
+        [
+          218.7777,
+          160.0
+        ],
+        [
+          215.7676,
+          160.0
+        ],
+        [
+          212.7575,
+          160.0
+        ],
+        [
+          209.7474,
+          160.0
+        ],
+        [
+          206.7372,
+          160.0
+        ],
+        [
+          203.7271,
+          160.0
+        ],
+        [
+          200.717,
+          160.0
+        ],
+        [
+          197.7069,
+          160.0
+        ],
+        [
+          194.6968,
+          160.0
+        ],
+        [
+          191.6867,
+          160.0
+        ],
+        [
+          188.6766,
+          160.0
+        ],
+        [
+          185.6665,
+          160.0
+        ],
+        [
+          182.6564,
+          160.0
+        ],
+        [
+          179.6463,
+          160.0
+        ],
+        [
+          176.6362,
+          160.0
+        ],
+        [
+          173.6261,
+          160.0
+        ],
+        [
+          170.616,
+          160.0
+        ],
+        [
+          167.6059,
+          160.0
+        ],
+        [
+          164.5958,
+          160.0
+        ],
+        [
+          161.5857,
+          160.0
+        ],
+        [
+          158.5756,
+          160.0
+        ],
+        [
+          155.5655,
+          160.0
+        ],
+        [
+          152.5554,
+          160.0
+        ],
+        [
+          149.5453,
+          160.0
+        ],
+        [
+          146.5352,
+          160.0
+        ],
+        [
+          143.5251,
+          160.0
+        ],
+        [
+          140.515,
+          160.0
+        ],
+        [
+          137.5049,
+          160.0
+        ],
+        [
+          134.4948,
+          160.0
+        ],
+        [
+          131.4846,
+          160.0
+        ],
+        [
+          129.2142,
+          161.7858
+        ],
+        [
+          129.0,
+          164.7071
+        ],
+        [
+          129.0,
+          167.7172
+        ],
+        [
+          129.0,
+          170.7273
+        ],
+        [
+          129.0,
+          173.7374
+        ],
+        [
+          129.0,
+          176.7475
+        ],
+        [
+          129.0,
+          179.7577
+        ],
+        [
+          129.0,
+          182.7678
+        ],
+        [
+          129.0,
+          185.7779
+        ],
+        [
+          129.0,
+          188.788
+        ],
+        [
+          129.0,
+          191.7981
+        ],
+        [
+          129.0,
+          194.8082
+        ],
+        [
+          129.0,
+          197.8183
+        ],
+        [
+          129.0,
+          200.8284
+        ],
+        [
+          129.0,
+          203.8385
+        ],
+        [
+          129.0,
+          206.8486
+        ],
+        [
+          129.0,
+          209.8587
+        ],
+        [
+          129.0,
+          212.8688
+        ],
+        [
+          129.0,
+          215.8789
+        ],
+        [
+          129.0,
+          218.889
+        ],
+        [
+          129.0,
+          221.8991
+        ],
+        [
+          129.0,
+          224.9092
+        ],
+        [
+          129.0,
+          227.9193
+        ],
+        [
+          129.0,
+          230.9294
+        ],
+        [
+          129.0,
+          233.9395
+        ],
+        [
+          129.0,
+          236.9496
+        ],
+        [
+          129.0,
+          239.9597
+        ],
+        [
+          129.0,
+          242.9698
+        ],
+        [
+          129.0,
+          245.9799
+        ],
+        [
+          129.0,
+          248.99
+        ],
+        [
+          129.0,
+          252.0001
+        ],
+        [
+          129.0,
+          255.0102
+        ],
+        [
+          129.0,
+          258.0204
+        ],
+        [
+          129.0,
+          261.0305
+        ],
+        [
+          129.0,
+          264.0406
+        ],
+        [
+          129.0,
+          267.0507
+        ],
+        [
+          129.0,
+          270.0608
+        ],
+        [
+          128.0,
+          272.6567
+        ],
+        [
+          128.0,
+          275.6668
+        ],
+        [
+          128.0,
+          278.6769
+        ],
+        [
+          128.0,
+          281.687
+        ],
+        [
+          128.0,
+          284.6971
+        ],
+        [
+          129.0,
+          287.293
+        ],
+        [
+          129.9214,
+          289.9214
+        ],
+        [
+          132.899,
+          290.0
+        ],
+        [
+          135.9091,
+          290.0
+        ],
+        [
+          138.9192,
+          290.0
+        ],
+        [
+          141.9293,
+          290.0
+        ],
+        [
+          144.9394,
+          290.0
+        ],
+        [
+          147.9495,
+          290.0
+        ],
+        [
+          150.9596,
+          290.0
+        ],
+        [
+          153.9697,
+          290.0
+        ],
+        [
+          156.9798,
+          290.0
+        ],
+        [
+          159.9899,
+          290.0
+        ],
+        [
+          163.0,
+          290.0
+        ]
+      ],
+      "smoothed_points": [
+        [
+          280.0,
+          289.0
+        ],
+        [
+          280.0,
+          285.7625
+        ],
+        [
+          280.0,
+          282.9589
+        ],
+        [
+          280.0,
+          279.9689
+        ],
+        [
+          280.0,
+          276.9596
+        ],
+        [
+          280.0,
+          273.9495
+        ],
+        [
+          280.0,
+          270.9394
+        ],
+        [
+          280.0,
+          267.9293
+        ],
+        [
+          280.0,
+          264.9192
+        ],
+        [
+          280.0,
+          261.9091
+        ],
+        [
+          280.0,
+          258.899
+        ],
+        [
+          280.0,
+          255.8889
+        ],
+        [
+          280.0,
+          252.8788
+        ],
+        [
+          280.0,
+          249.8686
+        ],
+        [
+          280.0,
+          246.8585
+        ],
+        [
+          280.0,
+          243.8484
+        ],
+        [
+          280.0,
+          240.8383
+        ],
+        [
+          280.0,
+          237.8282
+        ],
+        [
+          280.0,
+          234.8181
+        ],
+        [
+          280.0,
+          231.808
+        ],
+        [
+          280.0,
+          228.7979
+        ],
+        [
+          280.0,
+          225.7878
+        ],
+        [
+          280.0,
+          222.7777
+        ],
+        [
+          280.0,
+          219.7676
+        ],
+        [
+          280.0,
+          216.7575
+        ],
+        [
+          280.0,
+          213.7474
+        ],
+        [
+          280.0,
+          210.7373
+        ],
+        [
+          280.0,
+          207.7272
+        ],
+        [
+          280.0,
+          204.7171
+        ],
+        [
+          280.0,
+          201.707
+        ],
+        [
+          280.0,
+          198.6969
+        ],
+        [
+          280.0,
+          195.6868
+        ],
+        [
+          280.0,
+          192.6767
+        ],
+        [
+          280.0,
+          189.6666
+        ],
+        [
+          280.0,
+          186.6565
+        ],
+        [
+          280.0,
+          183.6464
+        ],
+        [
+          280.0,
+          180.6363
+        ],
+        [
+          280.0,
+          177.6262
+        ],
+        [
+          280.0,
+          174.616
+        ],
+        [
+          279.9997,
+          171.6061
+        ],
+        [
+          279.9924,
+          168.5996
+        ],
+        [
+          279.9091,
+          165.6365
+        ],
+        [
+          279.4563,
+          162.9378
+        ],
+        [
+          278.1354,
+          161.026
+        ],
+        [
+          275.8122,
+          160.1976
+        ],
+        [
+          272.9454,
+          160.018
+        ],
+        [
+          269.9489,
+          160.0007
+        ],
+        [
+          266.9393,
+          160.0
+        ],
+        [
+          263.9292,
+          160.0
+        ],
+        [
+          260.9191,
+          160.0
+        ],
+        [
+          257.909,
+          160.0
+        ],
+        [
+          254.8989,
+          160.0
+        ],
+        [
+          251.8888,
+          160.0
+        ],
+        [
+          248.8787,
+          160.0
+        ],
+        [
+          245.8686,
+          160.0
+        ],
+        [
+          242.8585,
+          160.0
+        ],
+        [
+          239.8484,
+          160.0
+        ],
+        [
+          236.8383,
+          160.0
+        ],
+        [
+          233.8282,
+          160.0
+        ],
+        [
+          230.8181,
+          160.0
+        ],
+        [
+          227.808,
+          160.0
+        ],
+        [
+          224.7979,
+          160.0
+        ],
+        [
+          221.7878,
+          160.0
+        ],
+        [
+          218.7777,
+          160.0
+        ],
+        [
+          215.7676,
+          160.0
+        ],
+        [
+          212.7575,
+          160.0
+        ],
+        [
+          209.7474,
+          160.0
+        ],
+        [
+          206.7372,
+          160.0
+        ],
+        [
+          203.7271,
+          160.0
+        ],
+        [
+          200.717,
+          160.0
+        ],
+        [
+          197.7069,
+          160.0
+        ],
+        [
+          194.6968,
+          160.0
+        ],
+        [
+          191.6867,
+          160.0
+        ],
+        [
+          188.6766,
+          160.0
+        ],
+        [
+          185.6665,
+          160.0
+        ],
+        [
+          182.6564,
+          160.0
+        ],
+        [
+          179.6463,
+          160.0
+        ],
+        [
+          176.6362,
+          160.0
+        ],
+        [
+          173.6261,
+          160.0
+        ],
+        [
+          170.616,
+          160.0
+        ],
+        [
+          167.6059,
+          160.0
+        ],
+        [
+          164.5958,
+          160.0
+        ],
+        [
+          161.5857,
+          160.0
+        ],
+        [
+          158.5756,
+          160.0
+        ],
+        [
+          155.5655,
+          160.0
+        ],
+        [
+          152.5554,
+          160.0
+        ],
+        [
+          149.5453,
+          160.0
+        ],
+        [
+          146.5352,
+          160.0
+        ],
+        [
+          143.5251,
+          160.0
+        ],
+        [
+          140.5152,
+          160.0005
+        ],
+        [
+          137.5105,
+          160.0127
+        ],
+        [
+          134.565,
+          160.1428
+        ],
+        [
+          131.9267,
+          160.775
+        ],
+        [
+          130.0791,
+          162.3653
+        ],
+        [
+          129.2431,
+          164.8396
+        ],
+        [
+          129.0307,
+          167.7323
+        ],
+        [
+          129.002,
+          170.7283
+        ],
+        [
+          129.0001,
+          173.7375
+        ],
+        [
+          129.0,
+          176.7475
+        ],
+        [
+          129.0,
+          179.7577
+        ],
+        [
+          129.0,
+          182.7678
+        ],
+        [
+          129.0,
+          185.7779
+        ],
+        [
+          129.0,
+          188.788
+        ],
+        [
+          129.0,
+          191.7981
+        ],
+        [
+          129.0,
+          194.8082
+        ],
+        [
+          129.0,
+          197.8183
+        ],
+        [
+          129.0,
+          200.8284
+        ],
+        [
+          129.0,
+          203.8385
+        ],
+        [
+          129.0,
+          206.8486
+        ],
+        [
+          129.0,
+          209.8587
+        ],
+        [
+          129.0,
+          212.8688
+        ],
+        [
+          129.0,
+          215.8789
+        ],
+        [
+          129.0,
+          218.889
+        ],
+        [
+          129.0,
+          221.8991
+        ],
+        [
+          129.0,
+          224.9092
+        ],
+        [
+          129.0,
+          227.9193
+        ],
+        [
+          129.0,
+          230.9294
+        ],
+        [
+          129.0,
+          233.9395
+        ],
+        [
+          129.0,
+          236.9496
+        ],
+        [
+          129.0,
+          239.9597
+        ],
+        [
+          129.0,
+          242.9698
+        ],
+        [
+          129.0,
+          245.9799
+        ],
+        [
+          129.0,
+          248.99
+        ],
+        [
+          129.0,
+          252.0001
+        ],
+        [
+          129.0,
+          255.0102
+        ],
+        [
+          129.0,
+          258.0204
+        ],
+        [
+          128.9997,
+          261.0303
+        ],
+        [
+          128.9933,
+          264.0378
+        ],
+        [
+          128.9314,
+          267.0222
+        ],
+        [
+          128.69,
+          269.9324
+        ],
+        [
+          128.31,
+          272.7851
+        ],
+        [
+          128.0689,
+          275.6951
+        ],
+        [
+          128.0136,
+          278.6768
+        ],
+        [
+          128.0758,
+          281.6553
+        ],
+        [
+          128.3939,
+          284.5221
+        ],
+        [
+          129.2008,
+          287.081
+        ],
+        [
+          130.7177,
+          288.9319
+        ],
+        [
+          133.0666,
+          289.7771
+        ],
+        [
+          135.9258,
+          289.9763
+        ],
+        [
+          138.9199,
+          289.9988
+        ],
+        [
+          141.9293,
+          290.0
+        ],
+        [
+          144.9394,
+          290.0
+        ],
+        [
+          147.9495,
+          290.0
+        ],
+        [
+          150.9596,
+          290.0
+        ],
+        [
+          153.9689,
+          290.0
+        ],
+        [
+          156.9589,
+          290.0
+        ],
+        [
+          159.7625,
+          290.0
+        ],
+        [
+          163.0,
+          290.0
+        ]
+      ],
+      "raw_keypoints": [
+        0,
+        43,
+        93,
+        136,
+        142,
+        147
+      ],
+      "refined_keypoints": [
+        0,
+        42,
+        93,
+        136,
+        147
+      ],
+      "keypoints": [
+        0,
+        42,
+        93,
+        136,
+        147
+      ],
+      "global_lines": [],
+      "collapsed_full_loop_arc": false,
+      "segments": [
+        {
+          "kind": "line",
+          "start_idx": 0,
+          "end_idx": 42,
+          "effective_params": 1,
+          "max_error": 0.4867,
+          "start": [
+            280.0,
+            289.0
+          ],
+          "end": [
+            280.0,
+            162.5756
+          ],
+          "segment_id": 0,
+          "type": "line",
+          "mean_error": 0.0
+        },
+        {
+          "kind": "spline",
+          "start_idx": 42,
+          "end_idx": 93,
+          "effective_params": 9,
+          "max_error": 1.5005,
+          "control_points": [
+            [
+              280.0614,
+              161.5648
+            ],
+            [
+              264.1973,
+              159.2003
+            ],
+            [
+              229.9029,
+              160.291
+            ],
+            [
+              180.0857,
+              160.0905
+            ],
+            [
+              145.9309,
+              159.4318
+            ],
+            [
+              129.7515,
+              161.2528
+            ]
+          ],
+          "segment_id": 1,
+          "type": "spline",
+          "mean_error": 0.0
+        },
+        {
+          "kind": "spline",
+          "start_idx": 93,
+          "end_idx": 136,
+          "effective_params": 9,
+          "max_error": 1.1415,
+          "control_points": [
+            [
+              129.5354,
+              162.3101
+            ],
+            [
+              128.9654,
+              176.2846
+            ],
+            [
+              128.5953,
+              204.8199
+            ],
+            [
+              129.8234,
+              247.0278
+            ],
+            [
+              127.5522,
+              275.7248
+            ],
+            [
+              129.6128,
+              289.2189
+            ]
+          ],
+          "segment_id": 2,
+          "type": "spline",
+          "mean_error": 0.0
+        },
+        {
+          "kind": "line",
+          "start_idx": 136,
+          "end_idx": 147,
+          "effective_params": 1,
+          "max_error": 0.7056,
+          "start": [
+            129.9214,
+            289.9214
+          ],
+          "end": [
+            163.0,
+            290.0
+          ],
+          "segment_id": 3,
+          "type": "line",
+          "mean_error": 0.0
+        }
+      ],
+      "debug": {
+        "initial_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 38,
+            "effective_params": 1,
+            "max_error": 0.0,
+            "start": [
+              280.0,
+              289.0
+            ],
+            "end": [
+              280.0,
+              174.616
+            ],
+            "sample_count": 39,
+            "mean_error": 0.0
+          },
+          {
+            "kind": "line",
+            "start_idx": 38,
+            "end_idx": 42,
+            "effective_params": 1,
+            "max_error": 0.1881,
+            "start": [
+              280.0,
+              174.616
+            ],
+            "end": [
+              280.0,
+              162.5756
+            ],
+            "sample_count": 5,
+            "mean_error": 0.1177
+          },
+          {
+            "kind": "arc",
+            "start_idx": 42,
+            "end_idx": 48,
+            "effective_params": 2,
+            "max_error": 0.6499,
+            "center": [
+              270.1285,
+              174.2003
+            ],
+            "radius": 14.8446,
+            "sweep_deg": -63.2163,
+            "sample_count": 7,
+            "mean_error": 0.4329
+          },
+          {
+            "kind": "line",
+            "start_idx": 48,
+            "end_idx": 88,
+            "effective_params": 1,
+            "max_error": 0.0,
+            "start": [
+              263.9292,
+              160.0
+            ],
+            "end": [
+              143.5251,
+              160.0
+            ],
+            "sample_count": 41,
+            "mean_error": 0.0
+          },
+          {
+            "kind": "line",
+            "start_idx": 88,
+            "end_idx": 93,
+            "effective_params": 1,
+            "max_error": 0.9165,
+            "start": [
+              143.5251,
+              160.0
+            ],
+            "end": [
+              129.2142,
+              161.7858
+            ],
+            "sample_count": 6,
+            "mean_error": 0.4737
+          },
+          {
+            "kind": "line",
+            "start_idx": 93,
+            "end_idx": 98,
+            "effective_params": 1,
+            "max_error": 0.4396,
+            "start": [
+              129.2142,
+              161.7858
+            ],
+            "end": [
+              129.0,
+              176.7475
+            ],
+            "sample_count": 6,
+            "mean_error": 0.2275
+          },
+          {
+            "kind": "line",
+            "start_idx": 98,
+            "end_idx": 131,
+            "effective_params": 1,
+            "max_error": 0.7146,
+            "start": [
+              129.0,
+              176.7475
+            ],
+            "end": [
+              128.0,
+              275.6668
+            ],
+            "sample_count": 34,
+            "mean_error": 0.1103
+          },
+          {
+            "kind": "line",
+            "start_idx": 131,
+            "end_idx": 136,
+            "effective_params": 1,
+            "max_error": 0.8791,
+            "start": [
+              128.0,
+              275.6668
+            ],
+            "end": [
+              129.9214,
+              289.9214
+            ],
+            "sample_count": 6,
+            "mean_error": 0.477
+          },
+          {
+            "kind": "line",
+            "start_idx": 136,
+            "end_idx": 142,
+            "effective_params": 1,
+            "max_error": 0.5155,
+            "start": [
+              129.9214,
+              289.9214
+            ],
+            "end": [
+              147.9495,
+              290.0
+            ],
+            "sample_count": 7,
+            "mean_error": 0.2238
+          },
+          {
+            "kind": "line",
+            "start_idx": 142,
+            "end_idx": 147,
+            "effective_params": 1,
+            "max_error": 0.0,
+            "start": [
+              147.9495,
+              290.0
+            ],
+            "end": [
+              163.0,
+              290.0
+            ],
+            "sample_count": 6,
+            "mean_error": 0.0
+          }
+        ],
+        "dp_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 42,
+            "effective_params": 1,
+            "max_error": 0.4867,
+            "start": [
+              280.0,
+              289.0
+            ],
+            "end": [
+              280.0,
+              162.5756
+            ],
+            "sample_count": 43,
+            "mean_error": 0.0336
+          },
+          {
+            "kind": "spline",
+            "start_idx": 42,
+            "end_idx": 93,
+            "effective_params": 9,
+            "max_error": 1.5005,
+            "control_points": [
+              [
+                280.0614,
+                161.5648
+              ],
+              [
+                264.1973,
+                159.2003
+              ],
+              [
+                229.9029,
+                160.291
+              ],
+              [
+                180.0857,
+                160.0905
+              ],
+              [
+                145.9309,
+                159.4318
+              ],
+              [
+                129.7515,
+                161.2528
+              ]
+            ],
+            "sample_count": 52,
+            "mean_error": 0.2362
+          },
+          {
+            "kind": "spline",
+            "start_idx": 93,
+            "end_idx": 136,
+            "effective_params": 9,
+            "max_error": 1.1415,
+            "control_points": [
+              [
+                129.5354,
+                162.3101
+              ],
+              [
+                128.9654,
+                176.2846
+              ],
+              [
+                128.5953,
+                204.8199
+              ],
+              [
+                129.8234,
+                247.0278
+              ],
+              [
+                127.5522,
+                275.7248
+              ],
+              [
+                129.6128,
+                289.2189
+              ]
+            ],
+            "sample_count": 44,
+            "mean_error": 0.2303
+          },
+          {
+            "kind": "line",
+            "start_idx": 136,
+            "end_idx": 147,
+            "effective_params": 1,
+            "max_error": 0.7056,
+            "start": [
+              129.9214,
+              289.9214
+            ],
+            "end": [
+              163.0,
+              290.0
+            ],
+            "sample_count": 12,
+            "mean_error": 0.1717
+          }
+        ],
+        "merged_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 42,
+            "effective_params": 1,
+            "max_error": 0.4867,
+            "start": [
+              280.0,
+              289.0
+            ],
+            "end": [
+              280.0,
+              162.5756
+            ],
+            "sample_count": 43,
+            "mean_error": 0.0336
+          },
+          {
+            "kind": "spline",
+            "start_idx": 42,
+            "end_idx": 93,
+            "effective_params": 9,
+            "max_error": 1.5005,
+            "control_points": [
+              [
+                280.0614,
+                161.5648
+              ],
+              [
+                264.1973,
+                159.2003
+              ],
+              [
+                229.9029,
+                160.291
+              ],
+              [
+                180.0857,
+                160.0905
+              ],
+              [
+                145.9309,
+                159.4318
+              ],
+              [
+                129.7515,
+                161.2528
+              ]
+            ],
+            "sample_count": 52,
+            "mean_error": 0.2362
+          },
+          {
+            "kind": "spline",
+            "start_idx": 93,
+            "end_idx": 136,
+            "effective_params": 9,
+            "max_error": 1.1415,
+            "control_points": [
+              [
+                129.5354,
+                162.3101
+              ],
+              [
+                128.9654,
+                176.2846
+              ],
+              [
+                128.5953,
+                204.8199
+              ],
+              [
+                129.8234,
+                247.0278
+              ],
+              [
+                127.5522,
+                275.7248
+              ],
+              [
+                129.6128,
+                289.2189
+              ]
+            ],
+            "sample_count": 44,
+            "mean_error": 0.2303
+          },
+          {
+            "kind": "line",
+            "start_idx": 136,
+            "end_idx": 147,
+            "effective_params": 1,
+            "max_error": 0.7056,
+            "start": [
+              129.9214,
+              289.9214
+            ],
+            "end": [
+              163.0,
+              290.0
+            ],
+            "sample_count": 12,
+            "mean_error": 0.1717
+          }
+        ],
+        "final_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 42,
+            "effective_params": 1,
+            "max_error": 0.4867,
+            "start": [
+              280.0,
+              289.0
+            ],
+            "end": [
+              280.0,
+              162.5756
+            ],
+            "sample_count": 43,
+            "mean_error": 0.0336
+          },
+          {
+            "kind": "spline",
+            "start_idx": 42,
+            "end_idx": 93,
+            "effective_params": 9,
+            "max_error": 1.5005,
+            "control_points": [
+              [
+                280.0614,
+                161.5648
+              ],
+              [
+                264.1973,
+                159.2003
+              ],
+              [
+                229.9029,
+                160.291
+              ],
+              [
+                180.0857,
+                160.0905
+              ],
+              [
+                145.9309,
+                159.4318
+              ],
+              [
+                129.7515,
+                161.2528
+              ]
+            ],
+            "sample_count": 52,
+            "mean_error": 0.2362
+          },
+          {
+            "kind": "spline",
+            "start_idx": 93,
+            "end_idx": 136,
+            "effective_params": 9,
+            "max_error": 1.1415,
+            "control_points": [
+              [
+                129.5354,
+                162.3101
+              ],
+              [
+                128.9654,
+                176.2846
+              ],
+              [
+                128.5953,
+                204.8199
+              ],
+              [
+                129.8234,
+                247.0278
+              ],
+              [
+                127.5522,
+                275.7248
+              ],
+              [
+                129.6128,
+                289.2189
+              ]
+            ],
+            "sample_count": 44,
+            "mean_error": 0.2303
+          },
+          {
+            "kind": "line",
+            "start_idx": 136,
+            "end_idx": 147,
+            "effective_params": 1,
+            "max_error": 0.7056,
+            "start": [
+              129.9214,
+              289.9214
+            ],
+            "end": [
+              163.0,
+              290.0
+            ],
+            "sample_count": 12,
+            "mean_error": 0.1717
+          }
+        ],
+        "boundary_field_weight": 0.08,
+        "boundary_field_mean": 0.22998150470252496,
+        "boundary_field_max": 0.9988210982996486
+      }
+    },
+    {
+      "component_id": 7,
+      "component_dir": "Rebuild\\param48_hsv_probe\\intermediates\\component_007",
+      "debug_path": "Rebuild\\param48_hsv_probe\\intermediates\\component_007\\semantic_debug.json",
+      "closed": false,
+      "sampled_point_count": 58,
+      "resampled_points": [
+        [
+          279.0,
+          290.0
+        ],
+        [
+          275.9739,
+          290.0
+        ],
+        [
+          272.9479,
+          290.0
+        ],
+        [
+          269.9218,
+          290.0
+        ],
+        [
+          266.8958,
+          290.0
+        ],
+        [
+          263.8697,
+          290.0
+        ],
+        [
+          260.8437,
+          290.0
+        ],
+        [
+          257.8176,
+          290.0
+        ],
+        [
+          254.7915,
+          290.0
+        ],
+        [
+          251.7655,
+          290.0
+        ],
+        [
+          248.7394,
+          290.0
+        ],
+        [
+          245.7973,
+          289.7973
+        ],
+        [
+          245.0,
+          287.1015
+        ],
+        [
+          245.0,
+          284.0755
+        ],
+        [
+          245.0,
+          281.0494
+        ],
+        [
+          245.0,
+          278.0234
+        ],
+        [
+          245.0,
+          274.9973
+        ],
+        [
+          245.0,
+          271.9712
+        ],
+        [
+          245.0,
+          268.9452
+        ],
+        [
+          245.0,
+          265.9191
+        ],
+        [
+          245.0,
+          262.8931
+        ],
+        [
+          245.0,
+          259.867
+        ],
+        [
+          245.0,
+          256.8409
+        ],
+        [
+          245.0,
+          253.8149
+        ],
+        [
+          245.0,
+          250.7888
+        ],
+        [
+          245.0,
+          247.7628
+        ],
+        [
+          245.0,
+          244.7367
+        ],
+        [
+          245.0,
+          241.7107
+        ],
+        [
+          245.0,
+          238.6846
+        ],
+        [
+          245.0,
+          235.6585
+        ],
+        [
+          245.0,
+          232.6325
+        ],
+        [
+          245.0,
+          229.6064
+        ],
+        [
+          243.9946,
+          227.0
+        ],
+        [
+          241.3827,
+          226.0
+        ],
+        [
+          238.3567,
+          226.0
+        ],
+        [
+          235.8196,
+          227.1804
+        ],
+        [
+          234.0,
+          229.4528
+        ],
+        [
+          234.0,
+          232.4788
+        ],
+        [
+          234.0,
+          235.5049
+        ],
+        [
+          234.0,
+          238.531
+        ],
+        [
+          234.0,
+          241.557
+        ],
+        [
+          234.0,
+          244.5831
+        ],
+        [
+          234.0,
+          247.6091
+        ],
+        [
+          234.0,
+          250.6352
+        ],
+        [
+          234.0,
+          253.6613
+        ],
+        [
+          234.0,
+          256.6873
+        ],
+        [
+          234.0,
+          259.7134
+        ],
+        [
+          234.0,
+          262.7394
+        ],
+        [
+          234.0,
+          265.7655
+        ],
+        [
+          234.0,
+          268.7915
+        ],
+        [
+          234.0,
+          271.8176
+        ],
+        [
+          234.0,
+          274.8437
+        ],
+        [
+          234.0,
+          277.8697
+        ],
+        [
+          234.0,
+          280.8958
+        ],
+        [
+          234.0,
+          283.9218
+        ],
+        [
+          234.0,
+          286.9479
+        ],
+        [
+          234.0,
+          289.9739
+        ],
+        [
+          234.0,
+          293.0
+        ]
+      ],
+      "smoothed_points": [
+        [
+          279.0,
+          290.0
+        ],
+        [
+          275.7453,
+          290.0
+        ],
+        [
+          272.9269,
+          290.0
+        ],
+        [
+          269.921,
+          290.0
+        ],
+        [
+          266.8958,
+          290.0
+        ],
+        [
+          263.8697,
+          290.0
+        ],
+        [
+          260.8437,
+          290.0
+        ],
+        [
+          257.8176,
+          289.9999
+        ],
+        [
+          254.7927,
+          289.9979
+        ],
+        [
+          251.7869,
+          289.9673
+        ],
+        [
+          248.9394,
+          289.7312
+        ],
+        [
+          246.6909,
+          288.7957
+        ],
+        [
+          245.4701,
+          286.7844
+        ],
+        [
+          245.0752,
+          284.0331
+        ],
+        [
+          245.0061,
+          281.0464
+        ],
+        [
+          245.0002,
+          278.0233
+        ],
+        [
+          245.0,
+          274.9973
+        ],
+        [
+          245.0,
+          271.9712
+        ],
+        [
+          245.0,
+          268.9452
+        ],
+        [
+          245.0,
+          265.9191
+        ],
+        [
+          245.0,
+          262.8931
+        ],
+        [
+          245.0,
+          259.867
+        ],
+        [
+          245.0,
+          256.8409
+        ],
+        [
+          245.0,
+          253.8149
+        ],
+        [
+          245.0,
+          250.7888
+        ],
+        [
+          245.0,
+          247.7628
+        ],
+        [
+          245.0,
+          244.7367
+        ],
+        [
+          245.0,
+          241.7107
+        ],
+        [
+          244.9997,
+          238.6847
+        ],
+        [
+          244.9926,
+          235.6619
+        ],
+        [
+          244.9128,
+          232.6756
+        ],
+        [
+          244.4882,
+          229.8969
+        ],
+        [
+          243.2715,
+          227.7352
+        ],
+        [
+          241.1371,
+          226.6069
+        ],
+        [
+          238.5693,
+          226.6297
+        ],
+        [
+          236.2674,
+          227.755
+        ],
+        [
+          234.7591,
+          229.8344
+        ],
+        [
+          234.1426,
+          232.5437
+        ],
+        [
+          234.0128,
+          235.5104
+        ],
+        [
+          234.0005,
+          238.5312
+        ],
+        [
+          234.0,
+          241.557
+        ],
+        [
+          234.0,
+          244.5831
+        ],
+        [
+          234.0,
+          247.6091
+        ],
+        [
+          234.0,
+          250.6352
+        ],
+        [
+          234.0,
+          253.6613
+        ],
+        [
+          234.0,
+          256.6873
+        ],
+        [
+          234.0,
+          259.7134
+        ],
+        [
+          234.0,
+          262.7394
+        ],
+        [
+          234.0,
+          265.7655
+        ],
+        [
+          234.0,
+          268.7915
+        ],
+        [
+          234.0,
+          271.8176
+        ],
+        [
+          234.0,
+          274.8437
+        ],
+        [
+          234.0,
+          277.8697
+        ],
+        [
+          234.0,
+          280.8958
+        ],
+        [
+          234.0,
+          283.921
+        ],
+        [
+          234.0,
+          286.9269
+        ],
+        [
+          234.0,
+          289.7453
+        ],
+        [
+          234.0,
+          293.0
+        ]
+      ],
+      "raw_keypoints": [
+        0,
+        5,
+        11,
+        32,
+        57
+      ],
+      "refined_keypoints": [
+        0,
+        11,
+        34,
+        57
+      ],
+      "keypoints": [
+        0,
+        11,
+        34,
+        57
+      ],
+      "global_lines": [],
+      "collapsed_full_loop_arc": false,
+      "segments": [
+        {
+          "kind": "line",
+          "start_idx": 0,
+          "end_idx": 11,
+          "effective_params": 1,
+          "max_error": 0.7926,
+          "start": [
+            279.0,
+            290.0
+          ],
+          "end": [
+            245.7973,
+            289.7973
+          ],
+          "segment_id": 0,
+          "type": "line",
+          "mean_error": 0.0
+        },
+        {
+          "kind": "line",
+          "start_idx": 11,
+          "end_idx": 27,
+          "effective_params": 1,
+          "max_error": 1.2436,
+          "start": [
+            245.7973,
+            289.7973
+          ],
+          "end": [
+            245.0,
+            241.7107
+          ],
+          "segment_id": 1,
+          "type": "line",
+          "mean_error": 0.0
+        },
+        {
+          "kind": "arc",
+          "start_idx": 27,
+          "end_idx": 34,
+          "effective_params": 2,
+          "max_error": 1.0182,
+          "center": [
+            236.4085,
+            235.4738
+          ],
+          "radius": 9.6043,
+          "sweep_deg": -112.2473,
+          "segment_id": 2,
+          "type": "arc",
+          "mean_error": 0.0
+        },
+        {
+          "kind": "arc",
+          "start_idx": 34,
+          "end_idx": 41,
+          "effective_params": 2,
+          "max_error": 0.8331,
+          "center": [
+            248.2284,
+            237.6362
+          ],
+          "radius": 15.0006,
+          "sweep_deg": -74.7539,
+          "segment_id": 3,
+          "type": "arc",
+          "mean_error": 0.0
+        },
+        {
+          "kind": "line",
+          "start_idx": 41,
+          "end_idx": 57,
+          "effective_params": 1,
+          "max_error": 0.0,
+          "start": [
+            234.0,
+            244.5831
+          ],
+          "end": [
+            234.0,
+            293.0
+          ],
+          "segment_id": 4,
+          "type": "line",
+          "mean_error": 0.0
+        }
+      ],
+      "debug": {
+        "initial_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 7,
+            "effective_params": 1,
+            "max_error": 0.0,
+            "start": [
+              279.0,
+              290.0
+            ],
+            "end": [
+              257.8176,
+              290.0
+            ],
+            "sample_count": 8,
+            "mean_error": 0.0
+          },
+          {
+            "kind": "line",
+            "start_idx": 7,
+            "end_idx": 11,
+            "effective_params": 1,
+            "max_error": 0.4138,
+            "start": [
+              257.8176,
+              290.0
+            ],
+            "end": [
+              245.7973,
+              289.7973
+            ],
+            "sample_count": 5,
+            "mean_error": 0.2576
+          },
+          {
+            "kind": "line",
+            "start_idx": 11,
+            "end_idx": 17,
+            "effective_params": 1,
+            "max_error": 0.7893,
+            "start": [
+              245.7973,
+              289.7973
+            ],
+            "end": [
+              245.0,
+              271.9712
+            ],
+            "sample_count": 7,
+            "mean_error": 0.3455
+          },
+          {
+            "kind": "line",
+            "start_idx": 17,
+            "end_idx": 27,
+            "effective_params": 1,
+            "max_error": 0.0,
+            "start": [
+              245.0,
+              271.9712
+            ],
+            "end": [
+              245.0,
+              241.7107
+            ],
+            "sample_count": 11,
+            "mean_error": 0.0
+          },
+          {
+            "kind": "arc",
+            "start_idx": 27,
+            "end_idx": 34,
+            "effective_params": 2,
+            "max_error": 1.0182,
+            "center": [
+              236.4085,
+              235.4738
+            ],
+            "radius": 9.6043,
+            "sweep_deg": -112.2473,
+            "sample_count": 8,
+            "mean_error": 0.6265
+          },
+          {
+            "kind": "arc",
+            "start_idx": 34,
+            "end_idx": 41,
+            "effective_params": 2,
+            "max_error": 0.8331,
+            "center": [
+              248.2284,
+              237.6362
+            ],
+            "radius": 15.0006,
+            "sweep_deg": -74.7539,
+            "sample_count": 8,
+            "mean_error": 0.4881
+          },
+          {
+            "kind": "line",
+            "start_idx": 41,
+            "end_idx": 57,
+            "effective_params": 1,
+            "max_error": 0.0,
+            "start": [
+              234.0,
+              244.5831
+            ],
+            "end": [
+              234.0,
+              293.0
+            ],
+            "sample_count": 17,
+            "mean_error": 0.0
+          }
+        ],
+        "dp_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 11,
+            "effective_params": 1,
+            "max_error": 0.7926,
+            "start": [
+              279.0,
+              290.0
+            ],
+            "end": [
+              245.7973,
+              289.7973
+            ],
+            "sample_count": 12,
+            "mean_error": 0.1931
+          },
+          {
+            "kind": "line",
+            "start_idx": 11,
+            "end_idx": 17,
+            "effective_params": 1,
+            "max_error": 0.7893,
+            "start": [
+              245.7973,
+              289.7973
+            ],
+            "end": [
+              245.0,
+              271.9712
+            ],
+            "sample_count": 7,
+            "mean_error": 0.3455
+          },
+          {
+            "kind": "line",
+            "start_idx": 17,
+            "end_idx": 27,
+            "effective_params": 1,
+            "max_error": 0.0,
+            "start": [
+              245.0,
+              271.9712
+            ],
+            "end": [
+              245.0,
+              241.7107
+            ],
+            "sample_count": 11,
+            "mean_error": 0.0
+          },
+          {
+            "kind": "arc",
+            "start_idx": 27,
+            "end_idx": 34,
+            "effective_params": 2,
+            "max_error": 1.0182,
+            "center": [
+              236.4085,
+              235.4738
+            ],
+            "radius": 9.6043,
+            "sweep_deg": -112.2473,
+            "sample_count": 8,
+            "mean_error": 0.6265
+          },
+          {
+            "kind": "arc",
+            "start_idx": 34,
+            "end_idx": 41,
+            "effective_params": 2,
+            "max_error": 0.8331,
+            "center": [
+              248.2284,
+              237.6362
+            ],
+            "radius": 15.0006,
+            "sweep_deg": -74.7539,
+            "sample_count": 8,
+            "mean_error": 0.4881
+          },
+          {
+            "kind": "line",
+            "start_idx": 41,
+            "end_idx": 57,
+            "effective_params": 1,
+            "max_error": 0.0,
+            "start": [
+              234.0,
+              244.5831
+            ],
+            "end": [
+              234.0,
+              293.0
+            ],
+            "sample_count": 17,
+            "mean_error": 0.0
+          }
+        ],
+        "merged_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 11,
+            "effective_params": 1,
+            "max_error": 0.7926,
+            "start": [
+              279.0,
+              290.0
+            ],
+            "end": [
+              245.7973,
+              289.7973
+            ],
+            "sample_count": 12,
+            "mean_error": 0.1931
+          },
+          {
+            "kind": "line",
+            "start_idx": 11,
+            "end_idx": 27,
+            "effective_params": 1,
+            "max_error": 1.2436,
+            "start": [
+              245.7973,
+              289.7973
+            ],
+            "end": [
+              245.0,
+              241.7107
+            ],
+            "sample_count": 17,
+            "mean_error": 0.2204
+          },
+          {
+            "kind": "arc",
+            "start_idx": 27,
+            "end_idx": 34,
+            "effective_params": 2,
+            "max_error": 1.0182,
+            "center": [
+              236.4085,
+              235.4738
+            ],
+            "radius": 9.6043,
+            "sweep_deg": -112.2473,
+            "sample_count": 8,
+            "mean_error": 0.6265
+          },
+          {
+            "kind": "arc",
+            "start_idx": 34,
+            "end_idx": 41,
+            "effective_params": 2,
+            "max_error": 0.8331,
+            "center": [
+              248.2284,
+              237.6362
+            ],
+            "radius": 15.0006,
+            "sweep_deg": -74.7539,
+            "sample_count": 8,
+            "mean_error": 0.4881
+          },
+          {
+            "kind": "line",
+            "start_idx": 41,
+            "end_idx": 57,
+            "effective_params": 1,
+            "max_error": 0.0,
+            "start": [
+              234.0,
+              244.5831
+            ],
+            "end": [
+              234.0,
+              293.0
+            ],
+            "sample_count": 17,
+            "mean_error": 0.0
+          }
+        ],
+        "final_segments": [
+          {
+            "kind": "line",
+            "start_idx": 0,
+            "end_idx": 11,
+            "effective_params": 1,
+            "max_error": 0.7926,
+            "start": [
+              279.0,
+              290.0
+            ],
+            "end": [
+              245.7973,
+              289.7973
+            ],
+            "sample_count": 12,
+            "mean_error": 0.1931
+          },
+          {
+            "kind": "line",
+            "start_idx": 11,
+            "end_idx": 27,
+            "effective_params": 1,
+            "max_error": 1.2436,
+            "start": [
+              245.7973,
+              289.7973
+            ],
+            "end": [
+              245.0,
+              241.7107
+            ],
+            "sample_count": 17,
+            "mean_error": 0.2204
+          },
+          {
+            "kind": "arc",
+            "start_idx": 27,
+            "end_idx": 34,
+            "effective_params": 2,
+            "max_error": 1.0182,
+            "center": [
+              236.4085,
+              235.4738
+            ],
+            "radius": 9.6043,
+            "sweep_deg": -112.2473,
+            "sample_count": 8,
+            "mean_error": 0.6265
+          },
+          {
+            "kind": "arc",
+            "start_idx": 34,
+            "end_idx": 41,
+            "effective_params": 2,
+            "max_error": 0.8331,
+            "center": [
+              248.2284,
+              237.6362
+            ],
+            "radius": 15.0006,
+            "sweep_deg": -74.7539,
+            "sample_count": 8,
+            "mean_error": 0.4881
+          },
+          {
+            "kind": "line",
+            "start_idx": 41,
+            "end_idx": 57,
+            "effective_params": 1,
+            "max_error": 0.0,
+            "start": [
+              234.0,
+              244.5831
+            ],
+            "end": [
+              234.0,
+              293.0
+            ],
+            "sample_count": 17,
+            "mean_error": 0.0
+          }
+        ],
+        "boundary_field_weight": 0.08,
+        "boundary_field_mean": 0.2678475106361363,
+        "boundary_field_max": 0.9994676887569183
+      }
+    }
+  ]
+}

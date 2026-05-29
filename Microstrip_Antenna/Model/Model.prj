@@ -1,0 +1,21 @@
+[Version]
+2
+[ProjectVersion]
+'# MWS Version: Version 2023.4 - Apr 26 2023 - ACIS 32.0.1 -
+[Author]
+WYHao
+[Mesh Cells]
+24,065
+[Mesh Type]
+Tetrahedral
+[Last Problem Type]
+High Frequency
+[Last Solver Type]
+HF Frequency Domain
+[Last Solver Type Abb]
+f
+[Results]
+Frequency Domain: S-Parameter
+[Modeler Unique ID]
+5:microstrip_antenna.cst?4e729568e67b491cbec74ad1103f30dc?177020:numberofparameters=0:port=1>mode=1>zre=0>zim=0
+[Comment]

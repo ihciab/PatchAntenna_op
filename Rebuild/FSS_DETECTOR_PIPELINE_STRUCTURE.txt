@@ -1,0 +1,1003 @@
+FSS Detector Pipeline Project Structure
+======================================
+
+Purpose
+-------
+This document describes the pipeline started by:
+
+    Rebuild/Fssdetector_test.py
+
+It is written for future manual tuning and for fast LLM handoff. The core task
+of this pipeline is: read FSS figure images, split/clean candidate subfigures,
+remove text/arrow/line annotations, segment the useful figure by color, repair
+removed regions, and save intermediate/final images.
+
+
+1. Current Test Entry
+---------------------
+File:
+
+    Rebuild/Fssdetector_test.py
+
+Current code:
+
+    from FssDetector import FSSfigDetector, TextSystemOCRAdapter
+
+    if __name__ == "__main__":
+        image_path = "./fss_test"
+        ocr = TextSystemOCRAdapter()
+
+        detector = FSSfigDetector(
+            max_k=6,
+            min_color_diff=30,
+            ocr_engine=ocr,
+        )
+        results = detector.detect(image_path, output_folder="./fss_out_results")
+
+Meaning:
+
+- Input is a folder: ./fss_test
+- Output folder is: ./fss_out_results
+- OCR is created first and injected into FSSfigDetector.
+- FSSfigDetector.detect(...) is the public entry point.
+- max_k and min_color_diff mainly affect color clustering.
+
+Important path note:
+
+- TextSystemOCRAdapter() defaults project_dir to the Rebuild folder.
+- The repository root contains tools/ and models/ folders.
+- Other code, for example fss_simulation_pipeline.py, creates OCR with:
+
+      TextSystemOCRAdapter(project_dir=str(PROJECT_ROOT))
+
+- If OCR model files are not found when running Fssdetector_test.py, this is a
+  likely reason. Consider passing project_dir as the repository root.
+
+
+2. High-Level Runtime Call Graph
+--------------------------------
+Main call chain:
+
+    Fssdetector_test.py
+        -> TextSystemOCRAdapter()
+        -> FSSfigDetector(...)
+        -> detector.detect(image_path, output_folder)
+            -> if image_path is a folder:
+                -> _collect_image_files(...)
+                -> for each image:
+                    -> _detect_single_image(...)
+            -> if image_path is a single image:
+                -> _detect_single_image(...)
+
+    _detect_single_image(...)
+        -> _extract_text_info(image_path)
+            -> ocr_engine.predict(image_path)
+        -> process_edges(image_path, output_path)
+            -> cv2.imread(...)
+            -> process_image(img)
+            -> for each returned subimage item:
+                -> resize to 845 x 845
+                -> detect global background color
+                -> remove_detected_elements_with_yolo(...)
+                   target classes: arrow, line
+                -> auto_kmeans_color_quantization(...)
+                -> _normalize_cluster_images(...)
+                -> classify_colors_with_priors(...)
+                -> filter_scattered_figures(...)
+                -> compose_figures(...)
+                -> build repair masks
+                -> threshold / connected-component cleanup
+                -> adjust_image_by_mask(...)
+                -> image_inpainting(...)
+                -> filter_small_connected_components(...)
+                -> fill_hole(...)
+                -> append result dict
+        -> _save_results(...)
+
+
+3. Main Class Composition
+-------------------------
+File:
+
+    Rebuild/FssDetector.py
+
+Class:
+
+    FSSfigDetector(
+        FSSPipelineMixin,
+        FSSClusteringMixin,
+        FSSSelectionMixin,
+        FSSLegacyMixin,
+    )
+
+This file mostly wires mixins together and stores configuration values.
+
+Constructor parameters worth tuning first:
+
+- max_k
+  Maximum K for KMeans color quantization.
+
+- min_color_diff
+  Minimum color distance threshold used while choosing/adjusting K.
+
+- ocr_engine
+  OCR adapter. Defaults to TextSystemOCRAdapter() if not provided.
+
+- show_debug_windows
+  Enables cv2 debug windows in some processing stages.
+
+- yolo_model_path
+  Default absolute path:
+      D:\LineFormer-main\models\bestyolo.pt
+
+- yolo_subfigure_class_id
+  Fallback class id for "subfigure".
+
+- yolo_text_class_id
+  Fallback class id for "text".
+
+- yolo_conf_threshold
+  YOLO confidence threshold.
+
+- yolo_iou_threshold
+  YOLO NMS IoU threshold.
+
+- yolo_element_labels
+  Labels removed after subfigure selection. Default: ("arrow", "line")
+
+- yolo_text_labels
+  Labels used for text candidate detection. Default: ("text",)
+
+- yolo_element_expand_pixels
+- yolo_element_border_width
+- yolo_element_min_component_area
+- yolo_element_inpaint_radius
+- ocr_text_score_threshold
+- yolo_ocr_match_iou_threshold
+
+Note:
+
+- self._yolo_model caches the YOLO model after first load.
+- self._yolo_load_failed avoids repeated failed model loading.
+- supported_image_extensions controls batch-folder image filtering.
+
+
+4. Core Modules Under Rebuild
+-----------------------------
+4.1 FssDetector.py
+
+Role:
+
+- Defines FSSfigDetector.
+- Imports and combines the OCR, selection, clustering, legacy, and pipeline
+  mixins.
+- Holds all major runtime configuration.
+
+Primary class:
+
+- FSSfigDetector
+
+
+4.2 fssdetector_pipeline.py
+
+Role:
+
+- Public detect(...) entry implementation.
+- Handles folder vs single-image inputs.
+- Runs full per-image processing.
+- Saves output images and masks.
+
+Primary mixin:
+
+- FSSPipelineMixin
+
+Important methods:
+
+- detect(image_path, output_folder=None, visualize=False)
+  Main user-facing method.
+
+- _collect_image_files(input_path)
+  Finds image files in a folder.
+
+- _extract_text_info(image_path)
+  Runs OCR and stores self.text_info_list.
+
+- _detect_single_image(...)
+  Runs OCR, process_edges, saving, and optional visualization.
+
+- process_edges(image_path, output_path)
+  Main image cleanup pipeline.
+
+- _save_results(...)
+  Writes per-subimage result files.
+
+Key intermediate result dict fields:
+
+- original
+- subimg_coords
+- text_detection_vis
+- text_mask
+- text_removed_mask
+- text_detections
+- yolo_clean_img
+- yolo_detection_vis
+- binary
+- process_binary
+- bg_fig
+- adjust_fig
+- repair_fig
+- main_fig
+- mask
+- diff_mask
+- yolo_mask
+- yolo_removed_mask
+- removed_mask
+- yolo_detections
+
+
+4.3 fssdetector_selection.py
+
+Role:
+
+- Splits the original image into candidate subfigures.
+- Uses YOLO first when available.
+- Uses OCR rules to reject non-target subfigures.
+- Removes confirmed text before color segmentation.
+- Detects and removes YOLO elements such as arrows and lines.
+
+Primary mixin:
+
+- FSSSelectionMixin
+
+Important methods:
+
+- process_image(img, expand_pixels=5)
+  Produces subimage items for process_edges(...). This is the main subfigure
+  selection and text-precleaning entry.
+
+- detect_subfigures_with_yolo(img, expand_pixels=5)
+  YOLO subfigure cropping.
+
+- select_target_subimg(subimg_with_coords, text_info_list, return_with_coords=False)
+  OCR-based filtering of subfigures.
+
+- remove_confirmed_text_with_yolo_and_ocr(...)
+  Text removal entry: YOLO proposes text boxes, OCR confirms them, then pixels
+  are removed/refined.
+
+- detect_elements_with_yolo(img, target_class_names=("arrow", "line"))
+  Generic YOLO element detector.
+
+- remove_detected_elements_with_yolo(...)
+  Detects arrow/line and calls legacy removal/refinement helpers.
+
+- _collect_local_text_infos(...)
+  Converts global OCR boxes into local subimage coordinates.
+
+- _confirm_text_detections_with_ocr(...)
+  Matches YOLO text boxes with OCR boxes by center-inside or IoU.
+
+- _is_valid_ocr_text_candidate(text, score)
+  Filters OCR text by score/content/length.
+
+Main tuning locations:
+
+- process_image:
+  border_width, Canny thresholds, contour area ratio, fallback logic.
+
+- select_target_subimg:
+  formula/frequency/axis-like filtering rules.
+
+- _is_valid_ocr_text_candidate:
+  OCR score threshold, allowed text patterns, max text length.
+
+- _confirm_text_detections_with_ocr:
+  YOLO/OCR matching threshold.
+
+- remove_confirmed_text_with_yolo_and_ocr:
+  text expand ratio/pixels, border width, min component area.
+
+- detect_subfigures_with_yolo / detect_elements_with_yolo:
+  YOLO confidence and IoU settings are stored on FSSfigDetector.
+
+
+4.4 fssdetector_clustering.py
+
+Role:
+
+- KMeans color quantization.
+- Color-role classification: padding/background/figure/outline.
+- Figure composition, mask-based adjustment, inpainting, connected-component
+  cleanup, hole filling.
+
+Primary mixin:
+
+- FSSClusteringMixin
+
+Important methods:
+
+- auto_kmeans_color_quantization(img, output_path, max_k=6, min_color_diff=30)
+  Chooses K using WCSS, silhouette score, Calinski-Harabasz score, and color
+  distance checks. Returns quantized image and RGB cluster centers.
+
+- _normalize_cluster_images(...)
+  Converts quantized image into one RGB image per cluster.
+
+- classify_colors_with_priors(...)
+  Assigns cluster indices to outline, padding, background, and figure.
+
+- filter_scattered_figures(...)
+  Removes low-area/scattered figure candidates.
+
+- compose_figures(...)
+  Combines selected cluster images.
+
+- adjust_image_by_mask(...)
+  Keeps foreground and turns background white according to binary mask.
+
+- image_inpainting(...)
+  Repairs pixels selected by mask using cv2.inpaint.
+
+- filter_small_connected_components(...)
+  Removes small foreground components.
+
+- fill_hole(...)
+  Performs simple hole/component fill.
+
+Main tuning locations:
+
+- auto_kmeans_color_quantization:
+  max_k, min_color_diff, sample_size, K selection strategy.
+
+- classify_colors_with_priors:
+  white_color_threshold, center_match_threshold, min_fig_area_ratio, and the
+  internal scoring weights for padding/background/figure/outline.
+
+- filter_scattered_figures:
+  area_ratio_threshold, scattered_threshold.
+
+- filter_small_connected_components and fill_hole:
+  min_pixel_threshold currently uses 0.02 * total_pixels.
+
+
+4.5 fssdetector_legacy.py
+
+Role:
+
+- Older helper methods still used by the current pipeline.
+- Handles detailed pixel-level mask refinement and removal inside YOLO boxes.
+- Provides drawing/debug utilities.
+
+Primary mixin:
+
+- FSSLegacyMixin
+
+Important methods still used by current pipeline:
+
+- draw_yolo_detections(...)
+- remove_yolo_targets_by_detections(...)
+- build_detection_mask_from_detections(...)
+- _refine_target_mask_in_patch(...)
+- _refine_arrow_mask_in_patch(...)
+- _refine_line_mask_in_patch(...)
+- _refine_text_mask_in_patch(...)
+- _estimate_patch_background_color(...)
+- _remove_target_from_patch(...)
+
+Tuning note:
+
+- If text/arrow/line removal removes too much or too little, inspect this file
+  after checking fssdetector_selection.py thresholds.
+
+
+4.6 fssdetector_ocr.py
+
+Role:
+
+- Adapter around tools.infer.predict_system.TextSystem.
+- Gives the FSS pipeline a simple predict(...) API.
+
+Primary class:
+
+- TextSystemOCRAdapter
+
+Expected predict(...) output:
+
+    [
+        {
+            "rec_polys": [np.ndarray polygon boxes],
+            "rec_texts": [str],
+            "rec_scores": [float],
+        }
+    ]
+
+Important methods:
+
+- _validate_model_files()
+  Raises FileNotFoundError if OCR config/model/dict paths do not exist.
+
+- _get_ocr_system()
+  Lazily creates TextSystem once and reuses it.
+
+- predict(image_input)
+  Accepts image path or numpy image.
+
+Important default paths:
+
+- project_dir defaults to directory of fssdetector_ocr.py, usually Rebuild.
+- models_dir = project_dir/models
+- infer_dir = project_dir/tools/infer
+
+Potential issue:
+
+- In this repository, tools/ and models/ are at the repository root, not clearly
+  under Rebuild. If OCR fails, instantiate with project_dir set to repo root.
+
+
+4.7 Preprocess_tool.py
+
+Role:
+
+- Shared preprocessing helpers used by fssdetector_pipeline.py and
+  fssdetector_selection.py.
+
+Important functions:
+
+- detect_background_color(image, ...)
+  Estimates global background color. Used before text/arrow/line cleanup and
+  color-role classification.
+
+- process_special_text_boxes(text_info_list, img, coord_threshold=10)
+  Fallback subfigure splitting logic based on OCR/text layout.
+
+
+4.8 NewParams.py
+
+Role:
+
+- Downstream parameterization after image cleanup.
+- Not called directly by Fssdetector_test.py.
+- Used by upper-level pipelines such as fss_parameterized_cst_pipeline.py.
+
+Important classes:
+
+- NewParams
+  Edge extraction / preprocessing wrapper.
+
+- CurveParameterizer
+  Converts cleaned edges/trace results into structured curve JSON, SVG, metrics,
+  and visualization files.
+
+Relationship to FSS detector:
+
+- FSS detector produces cleaned repair_fig.png.
+- NewParams can consume repair_fig.png for curve parameterization.
+
+
+4.9 PortSearch.py
+
+Role:
+
+- Downstream subject-edge / port-side analysis.
+- Not called directly by Fssdetector_test.py.
+- Used by upper-level CST pipeline.
+
+Important class:
+
+- SubjectEdgeAnalyzer
+
+
+4.10 Image2Pixel.py
+
+Role:
+
+- Converts images into pixel matrices for simulation/other workflows.
+- Not called directly by Fssdetector_test.py.
+
+Important class:
+
+- Image2Pixel
+
+
+4.11 Older / Side Modules
+
+- ImageInit.py
+  Older image initialization, centering, grayscale, blur, edge extraction.
+
+- BSplineContour.py
+  Older B-spline contour extraction / contour tree utilities.
+
+- Curves2Component.py
+  Converts curves to solid components using color detection and image init.
+
+- ColorDetector.py
+  HSV color detection utility.
+
+- Fss_analyzer.py and Fss_analyzer(1).py
+  Older analysis scripts.
+
+- test.py
+  Small NewParams test script.
+
+
+5. Output Structure
+-------------------
+For folder input:
+
+    fss_out_results/
+        <image_name_without_ext>/
+            000/
+                adjust_fig.png
+                bg_fig.png
+                process.png
+                text_detections.png              optional
+                yolo_clean.png
+                yolo_detections.png
+                repair_fig.png
+                <image_name>_mask.png
+                <image_name>_diff_mask.png
+                <image_name>_text_mask.png
+                <image_name>_text_removed_mask.png
+                <image_name>_yolo_mask.png
+                <image_name>_yolo_removed_mask.png
+                <image_name>_removed_mask.png
+                <image_name>.png
+            001/
+                ...
+
+Meaning of key output images:
+
+- process.png
+  Resized original subimage used by the pipeline.
+
+- yolo_clean.png
+  Subimage after arrow/line removal step.
+
+- text_detections.png
+  Visualization of text boxes confirmed by YOLO + OCR, if available.
+
+- yolo_detections.png
+  Visualization of arrow/line YOLO detections.
+
+- bg_fig.png
+  Cluster image classified as background.
+
+- adjust_fig.png
+  Main figure after binary-mask adjustment.
+
+- repair_fig.png
+  Final cleaned figure after inpainting and component cleanup.
+
+- *_mask.png
+  Final repair mask.
+
+- *_diff_mask.png
+  Mask from differences between origin_img and main_fig.
+
+- *_text_mask.png
+  Areas requiring repair due to removed text.
+
+- *_text_removed_mask.png
+  Pixels actually removed during text removal.
+
+- *_yolo_mask.png
+  Areas requiring repair due to removed arrow/line elements.
+
+- *_yolo_removed_mask.png
+  Pixels actually removed during arrow/line removal.
+
+- *_removed_mask.png
+  Combined removed pixels from text + arrow/line.
+
+Additional debug files from classify_colors_with_priors(...) are written
+directly to the per-image output_path:
+
+- outline_index_*_v2.png
+- bg_index_*_v2.png
+- padding_index_*_v2.png
+- fig_index_*_v2.png
+- classify_v2_stats.txt
+
+
+6. Main Data Structures
+-----------------------
+6.1 OCR text info
+
+self.text_info_list is a list of:
+
+    {
+        "box": OCR polygon, usually 4 points,
+        "text": recognized text,
+        "score": confidence float,
+    }
+
+Created by:
+
+    FSSPipelineMixin._extract_text_info(...)
+
+Consumed by:
+
+- FSSSelectionMixin.process_image(...)
+- select_target_subimg(...)
+- remove_confirmed_text_with_yolo_and_ocr(...)
+
+
+6.2 Subimage item
+
+process_image(...) now returns a list of dict items:
+
+    {
+        "image": cleaned_subimage,
+        "coords": (x_min, x_max, y_min, y_max),
+        "pre_repair_mask": text_repair_mask,
+        "pre_removed_mask": text_removed_mask,
+        "pre_detections": confirmed_text_detections,
+        "pre_detection_vis": text_detection_visualization,
+    }
+
+process_edges(...) still supports older ndarray-only return values.
+
+
+6.3 YOLO detection item
+
+YOLO detections are normalized as:
+
+    {
+        "xyxy": [x1, y1, x2, y2],
+        "class_id": int,
+        "class_name": "subfigure" | "text" | "arrow" | "line" | ...,
+        "score": float,
+    }
+
+Text detections confirmed with OCR also include:
+
+    "matched_ocr_texts": [...]
+
+
+6.4 process_edges final result item
+
+Each result returned by process_edges(...) is a dict containing original image,
+intermediate masks/images, detections, and final repair_fig.
+
+The most important final field for downstream use is:
+
+    result["repair_fig"]
+
+
+7. Detailed Pipeline Stages
+---------------------------
+Stage 0: Input discovery
+
+- detect(...) checks whether image_path is folder or file.
+- Folder mode sorts and processes supported image extensions.
+
+Stage 1: OCR extraction
+
+- _extract_text_info(image_path) runs OCR on the full original image.
+- Results are stored in self.text_info_list.
+
+Stage 2: Subfigure selection and text pre-cleaning
+
+- process_image(img) is called inside process_edges(...).
+- It tries YOLO subfigure detection first.
+- If YOLO returns at least 2 subfigures, it uses YOLO crops.
+- OCR rules reject formula/frequency/axis-like subfigures.
+- Each kept subimage is packaged through _package_processed_subimg_item(...).
+- Packaging removes confirmed text with YOLO + OCR and stores text repair masks.
+- If YOLO subfigure detection is unavailable/weak, fallback contour/OCR logic is used.
+
+Stage 3: Normalize image size
+
+- process_edges(...) resizes every subimage to 845 x 845.
+- Masks are resized with nearest-neighbor interpolation.
+- Grayscale input is converted to BGR.
+
+Stage 4: Background detection
+
+- Preprocess_tool.detect_background_color(...) estimates the global background.
+- RGB and BGR versions are used by later steps.
+
+Stage 5: Arrow/line removal
+
+- remove_detected_elements_with_yolo(...) detects yolo_element_labels.
+- Default labels are arrow and line.
+- remove_yolo_targets_by_detections(...) refines pixel masks and removes targets.
+- Outputs:
+  yolo_clean_img, yolo_mask, yolo_detections, yolo_removed_mask.
+
+Stage 6: Color quantization
+
+- auto_kmeans_color_quantization(...) runs KMeans.
+- Returns:
+  quantized_clusters_image, clusters_colors.
+- _normalize_cluster_images(...) converts quantized output into one image per cluster.
+
+Stage 7: Color role classification
+
+- classify_colors_with_priors(...) chooses:
+  outline_index, padding_index, bg_index, fig_index.
+- It uses color distance to white/black/background, border ratio, area ratio,
+  fill ratio, and connected-component count.
+
+Stage 8: Figure composition
+
+- filter_scattered_figures(...) removes weak figure clusters.
+- compose_figures(...) builds:
+  main_fig from selected figure clusters.
+  origin_img from figure + outline + optional padding clusters.
+
+Stage 9: Repair mask creation
+
+- diff_mask comes from absdiff(origin_img, main_fig) thresholded at 50.
+- repair_mask = diff_mask OR yolo_mask OR pre_repair_mask.
+- combined_removed_mask = yolo_removed_mask OR pre_removed_mask.
+
+Stage 10: Binary cleanup
+
+- main_fig is converted to gray and Otsu thresholded.
+- Connected components smaller than min_area are removed.
+- min_area is currently:
+
+      0.008 * black_pixels
+
+Stage 11: Adjust, inpaint, and clean final image
+
+- adjust_image_by_mask(...) uses binary mask to keep subject and make background white.
+- image_inpainting(...) repairs repair_mask regions.
+- filter_small_connected_components(...) removes small foreground blobs.
+- fill_hole(...) fills/removes small areas based on connected components.
+
+Stage 12: Save results
+
+- _save_results(...) writes per-subimage output files.
+
+
+8. Most Useful Tuning Map
+-------------------------
+If subfigure detection is wrong:
+
+- Rebuild/fssdetector_selection.py
+  - detect_subfigures_with_yolo
+  - process_image
+  - select_target_subimg
+  - is_axis_like_layout
+  - filter_heatmap_contours
+  - evaluate_square_like
+
+- Rebuild/FssDetector.py
+  - yolo_model_path
+  - yolo_subfigure_class_id
+  - yolo_conf_threshold
+  - yolo_iou_threshold
+
+If text removal is wrong:
+
+- Rebuild/fssdetector_selection.py
+  - remove_confirmed_text_with_yolo_and_ocr
+  - _is_valid_ocr_text_candidate
+  - _confirm_text_detections_with_ocr
+  - _collect_local_text_infos
+
+- Rebuild/fssdetector_legacy.py
+  - _refine_text_mask_in_patch
+  - remove_yolo_targets_by_detections
+
+- Rebuild/FssDetector.py
+  - ocr_text_score_threshold
+  - yolo_ocr_match_iou_threshold
+  - yolo_text_class_id
+  - yolo_text_labels
+
+If arrow/line removal is wrong:
+
+- Rebuild/fssdetector_selection.py
+  - detect_elements_with_yolo
+  - remove_detected_elements_with_yolo
+
+- Rebuild/fssdetector_legacy.py
+  - _refine_arrow_mask_in_patch
+  - _refine_line_mask_in_patch
+  - _refine_target_mask_in_patch
+  - _remove_target_from_patch
+
+- Rebuild/FssDetector.py
+  - yolo_element_labels
+  - yolo_element_expand_pixels
+  - yolo_element_border_width
+  - yolo_element_min_component_area
+
+If figure/background color segmentation is wrong:
+
+- Rebuild/fssdetector_clustering.py
+  - auto_kmeans_color_quantization
+  - classify_colors_with_priors
+  - filter_scattered_figures
+
+- Rebuild/FssDetector.py
+  - max_k
+  - min_color_diff
+
+If final cleaned figure is broken:
+
+- Rebuild/fssdetector_pipeline.py
+  - process_edges, especially repair_mask and binary cleanup stages.
+
+- Rebuild/fssdetector_clustering.py
+  - image_inpainting
+  - filter_small_connected_components
+  - fill_hole
+
+
+9. Generated / Debug Folders
+----------------------------
+These folders are outputs or experiments, not core source code:
+
+- Rebuild/__pycache__/
+- Rebuild/param_output/
+- Rebuild/param48_output/
+- Rebuild/param48_edges_trace_probe/
+- Rebuild/param48_edges_trace_median1_probe/
+- Rebuild/param48_edges_dilated_median1_probe/
+- Rebuild/param48_hsv_probe/
+- Rebuild/param48_hsv_contour_probe/
+
+They can be useful for comparing tuning results, but should not be treated as
+source modules.
+
+
+10. Repository-Level Related Pipelines
+--------------------------------------
+The FSS detector can be used as a first stage in larger workflows.
+
+Important repository files:
+
+- fss_parameterized_cst_pipeline.py
+  Higher-level pipeline:
+  1. clean image with FSSfigDetector
+  2. parameterize repair_fig.png with NewParams / CurveParameterizer
+  3. convert parameterized JSON into CST geometry
+
+- fss_simulation_pipeline.py
+  Uses FSSfigDetector as image preprocessor before simulation.
+
+- parameterized_json_to_cst.py
+  Builds CST geometry from NewParams / VTracer parameterization JSON.
+
+- evaluate_curve_parameterizer_clean_dataset.py
+  Evaluation script for NewParams / CurveParameterizer.
+
+
+11. External Dependencies / Runtime Assumptions
+-----------------------------------------------
+Python packages used by this detector area:
+
+- cv2 / OpenCV
+- numpy
+- matplotlib
+- scikit-learn
+- ultralytics
+- tools.infer.predict_system from local OCR code
+
+External model files:
+
+- YOLO model:
+      D:\LineFormer-main\models\bestyolo.pt
+  or another path passed through FSSfigDetector(yolo_model_path=...)
+
+- OCR model/config/dict files:
+      models/ptocr_v5_det.pth
+      models/ptocr_v5_mobile_rec.pth
+      tools/infer/myocrv5.yml
+      tools/infer/PP-OCRv5_mobile_rec.yml
+      tools/infer/ppocrv5_dict.txt
+
+Potential gotcha:
+
+- The current default OCR project_dir may point to Rebuild, while these folders
+  may live at the repository root.
+
+
+12. Notes For Future LLMs
+-------------------------
+When modifying this pipeline:
+
+- Start from Fssdetector_test.py only to understand how the pipeline is invoked.
+- The real behavior is distributed across mixins.
+- Read FssDetector.py first to see configuration defaults.
+- Read fssdetector_pipeline.py next to understand the full data flow.
+- Read fssdetector_selection.py for subfigure/text/YOLO behavior.
+- Read fssdetector_clustering.py for color segmentation and final cleanup.
+- Read fssdetector_legacy.py only when changing pixel-level YOLO mask refinement.
+- Many Chinese comments in source files appear mojibake/garbled. Trust function
+  names, variable names, and runtime logic more than garbled comments.
+- Do not confuse Rebuild/FssDetector.py with older references to
+  Rebuild/FSSfigDetector.py in older modules. The active test imports
+  FssDetector.py.
+- Prefer tuning thresholds in the smallest relevant module before changing
+  broad control flow.
+- Preserve output field names unless downstream code is also updated.
+
+
+13. Current Structure-Aware Cleanup Update - 2026-05-21 20:24
+-------------------------------------------------------------
+The cleanup path was upgraded so YOLO boxes are only candidate localizers.
+Final annotation masks are now refined at component level and repair masks are
+gated by structure proximity.
+
+Changed modules:
+
+- Rebuild/fssdetector_legacy.py
+  - Added compute_component_geometry(...).
+  - Added classify_annotation_component(...).
+  - _refine_target_mask_in_patch(...) now computes per-component geometry:
+    area, area ratio, fill ratio, aspect ratio, elongation, solidity, skeleton
+    length, estimated stroke width, border contact, and local contrast.
+  - Arrow / line / text masks are kept only when connected components match
+    annotation-like behavior. Large solid components are rejected as likely FSS
+    structure.
+  - Line masks still skeletonize before small dilation.
+
+- Rebuild/fssdetector_pipeline.py
+  - Added build_structure_mask(...), gate_repair_mask_by_structure(...),
+    is_background_only_region(...), and fill_background_only_regions(...).
+  - The pipeline now separates:
+      removed_mask: pixels deleted by annotation cleanup
+      repair_needed_mask: deleted pixels that are near/touching structure
+  - repair_needed_mask is produced by gating refined annotation masks against a
+    dilated structure mask.
+  - diff_annotation_mask is kept as debug output only and is not merged into
+    repair_needed_mask.
+  - Background-only removed regions are filled white instead of inpainted.
+  - New debug outputs are saved when present:
+      refined_component_mask.png
+      structure_mask.png
+      gated_repair_mask.png
+      background_only_regions.png
+      *_repair_needed_mask.png
+      *_dilated_structure_mask.png
+
+Important behavior:
+
+- Text or arrows in blank margins: removed/fill-white, no inpaint.
+- Annotation touching structure: removed and allowed into repair_needed_mask.
+- Background-only thin lines: removed/fill-white, no texture inpainting.
+- Existing result keys remain compatible. The existing "mask" key still points
+  to the final repair_needed_mask.
+
+Conservative principle:
+
+- False negatives are preferred over destructive false positives. The detector
+  should protect physical FSS geometry before aggressively deleting annotations.
+
+
+14. YOLO Element Recall / Repair Gate Tuning - 2026-05-21 21:40
+---------------------------------------------------------------
+This update responds to missing repair masks after the first structure-aware
+cleanup pass.
+
+Changed behavior:
+
+- Rebuild/FssDetector.py
+  - Added yolo_element_conf_threshold with default 0.12.
+  - This threshold is for arrow/line detection only.
+  - yolo_conf_threshold remains 0.20 and is still used for text/subfigure
+    detection, preserving the YOLO-text skip guard.
+  - Added repair_structure_dilation_pixels with default 10.
+
+- Rebuild/fssdetector_selection.py
+  - detect_elements_with_yolo(..., conf_threshold=None) can now receive a
+    caller-specific confidence threshold.
+  - remove_detected_elements_with_yolo(...) passes yolo_element_conf_threshold
+    when target classes include arrow/line.
+
+- Rebuild/fssdetector_pipeline.py
+  - gate_repair_mask_by_structure(...) now uses
+    repair_structure_dilation_pixels instead of the previous hard-coded 6 px.
+
+Validation note:
+
+- On test44, lowering arrow/line confidence from 0.20 to 0.12 increased line
+  detections from 9 to 11 while keeping text pre-check behavior unchanged.
+- The refined component mask remained split into repair_needed_mask and
+  background_only_regions, so extra detections do not automatically become
+  inpaint regions unless they are near structure.

@@ -1,0 +1,21 @@
+.idea/
+.pytest_cache/
+.vscode/
+__pycache__/
+*.py[cod]
+
+# User-requested non-project data
+test/
+clean_parametric_dataset_50/
+clean_parametric_eval_output/
+models/
+
+# Generated outputs
+optimization_runs/
+pipeline_runs/
+results/
+debug_pixel/
+
+# Local temp/cache folders
+.codex_tmp/
+

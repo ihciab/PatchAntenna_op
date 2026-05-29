@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "auto_select": true,
+  "max_movable_points": 8,
+  "max_dimensions": 20,
+  "default_dx_range": [-1.0, 1.0],
+  "default_dy_range": [-1.0, 1.0],
+  "freeze_topology_endpoints": true,
+  "selection_strategy": {
+    "prefer_high_curvature": true,
+    "prefer_internal_points": true,
+    "min_endpoint_distance_index": 2
+  },
+  "point_constraints": {}
+}

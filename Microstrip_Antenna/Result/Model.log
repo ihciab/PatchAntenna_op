@@ -1,0 +1,15 @@
+21/Apr/2026 15:06:09  In order to get an optimal performance, hyperthreading is ignored for parallel
+                      computations.
+                      
+                      ------------------------------------------------------------------------------
+21/Apr/2026 15:06:14  *** Error ***
+                      
+                      Frequency Domain Solver (TET): Terminated abnormally
+                      
+                      ------------------------------------------------------------------------------
+21/Apr/2026 15:06:14  Running postprocessing.
+                      
+                      ------------------------------------------------------------------------------
+21/Apr/2026 15:06:14  Postprocessing finished.
+                      
+                      ------------------------------------------------------------------------------
