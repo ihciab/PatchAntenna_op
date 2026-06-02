@@ -12,7 +12,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from geometry_validation import (
+from bayesian_optimization.geometry.geometry_validation import (
     GeometryValidationConfig,
     ValidationReport,
     distance_2d,

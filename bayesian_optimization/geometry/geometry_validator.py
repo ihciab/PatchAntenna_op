@@ -4,7 +4,7 @@ import math
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from primitive_mutator import collect_component_cache_points, parse_points
+from bayesian_optimization.geometry.primitive_mutator import collect_component_cache_points, parse_points
 
 
 Point = Tuple[float, float]

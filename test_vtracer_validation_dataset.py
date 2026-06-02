@@ -40,7 +40,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "AutoCAD_v8.5.4"))
 
 from core.geometry.segment_extractor import extract_segments_from_fitted_contour  # noqa: E402
-from vtracer_python import TraceConfig, VTracerPython  # noqa: E402
+from bayesian_optimization.tools.vtracer_python import TraceConfig, VTracerPython  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

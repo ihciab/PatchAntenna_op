@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from geometry_driven_parameterizer import GeometryDrivenParameterizer
+from bayesian_optimization.geometry.geometry_driven_parameterizer import GeometryDrivenParameterizer
 
 
 Point = Tuple[float, float]
@@ -94,7 +94,7 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
         self.edge_selection_diagnostics["patch_topology"] = patch_topology["metrics"]
         self._write_json(self.edge_dir / "edge_selection_diagnostics.json", self.edge_selection_diagnostics)
         if patch_topology["accepted"] and self._should_apply_patch_topology_override():
-            from geometry_driven_parameterizer import EDGE_REPRESENTATION_MODE
+            from bayesian_optimization.geometry.geometry_driven_parameterizer import EDGE_REPRESENTATION_MODE
 
             params = self._EdgeCandidate(
                 image_path=self.image_path,

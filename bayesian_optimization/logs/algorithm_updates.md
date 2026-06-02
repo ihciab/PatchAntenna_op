@@ -1,3 +1,29 @@
+## 2026-05-30
+### Changed files
+- optimization_pipeline.py
+- docs/bo_change_log.md
+- logs/algorithm_updates.md
+
+### Purpose
+Change invalid-geometry handling in the Bayesian Optimization loop from an early-stop trigger to a rollback-and-continue policy. Larger control-point displacement ranges are expected to produce more invalid samples during exploration; those samples should teach the optimizer through a penalty, but should not prematurely stop the run.
+
+### Behavior
+- `invalid_geometry` samples are still recorded in `optimization_history.json`.
+- The optimizer still receives the invalid-geometry penalty objective.
+- CST build/simulation is skipped for invalid geometry.
+- Invalid geometry does not update `best_design`.
+- Invalid geometry no longer consumes `no_improvement_patience`.
+- Invalid geometry ratio no longer triggers early stopping.
+- `MAX_INVALID_RATIO` / `--max-invalid-ratio` are retained for compatibility, but run metadata now records that invalid-ratio early stop is disabled.
+
+### Validation samples
+- `D:\Anaconda\envs\paper\python.exe -m py_compile optimization_pipeline.py`
+- `python -m py_compile optimization_pipeline.py`
+
+### Remaining risks
+- Runs with many invalid samples may now use more evaluations before reaching the 30-iteration cap.
+- The optimizer receives penalties for invalid regions, but very aggressive displacement ranges can still spend many trials near invalid geometry boundaries.
+
 ## 2026-05-25
 ### Changed files
 - Rebuild/port_topology_detector.py

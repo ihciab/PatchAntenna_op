@@ -84,7 +84,7 @@ if os.environ.get("LOKY_MAX_CPU_COUNT") is None:
     except Exception:
         os.environ["LOKY_MAX_CPU_COUNT"] = "4"
 
-from vtracer_python import TraceConfig, VTracerPython  # noqa: E402
+from bayesian_optimization.tools.vtracer_python import TraceConfig, VTracerPython  # noqa: E402
 from tools.dataset_generator.clean_parametric_dataset_generator import Segment, _segments_to_points  # noqa: E402
 
 
@@ -759,7 +759,7 @@ def run_eval(
         # 并行执行，用于批量扫参或全量评估。
         # Windows 下进程池会重新导入模块，因此 worker 逻辑放在
         # seg_eval_parallel_worker.py 中，避免闭包/局部函数无法 pickle。
-        import seg_eval_parallel_worker as _pool
+        from bayesian_optimization.tools import seg_eval_parallel_worker as _pool
 
         jw = max(1, min(int(jobs), 32, len(samples)))
         payloads: List[Tuple[Dict[str, Any], str, bool, bool, bool, float | None, int | None, str]] = [

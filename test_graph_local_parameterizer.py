@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from geometry_graph_parameterizer import GraphBasedLocalSplineParameterizer
+from bayesian_optimization.geometry.geometry_graph_parameterizer import GraphBasedLocalSplineParameterizer
 
 
 def _parameterizer(tmp_path: Path) -> GraphBasedLocalSplineParameterizer:

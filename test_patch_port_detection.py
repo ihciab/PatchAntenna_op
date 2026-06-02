@@ -8,8 +8,11 @@ import pytest
 
 from Rebuild.PortSearch import SubjectEdgeAnalyzer
 from Rebuild.port_topology_detector import PatchPortTopologyDetector
-from parameterized_json_to_cst import CSTParametricConfig, ParameterizedJsonCSTBuilder
-from fss_parameterized_cst_pipeline import FSSParameterizedCSTPipeline
+from bayesian_optimization.pipelines.fss_parameterized_cst_pipeline import FSSParameterizedCSTPipeline
+from bayesian_optimization.simulation.parameterized_json_to_cst import (
+    CSTParametricConfig,
+    ParameterizedJsonCSTBuilder,
+)
 
 
 def _blank_mask(size: tuple[int, int] = (120, 160)) -> np.ndarray:

@@ -5,7 +5,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from geometry_driven_parameterizer import EDGE_REPRESENTATION_MODE, GeometryDrivenParameterizer
+from bayesian_optimization.geometry.geometry_driven_parameterizer import (
+    EDGE_REPRESENTATION_MODE,
+    GeometryDrivenParameterizer,
+)
 
 
 def _parameterizer(tmp_path: Path) -> GeometryDrivenParameterizer:

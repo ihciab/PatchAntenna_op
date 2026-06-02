@@ -19,7 +19,7 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", str(max(1, os.cpu_count() or 1)))
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 REBUILD_DIR = PROJECT_ROOT / "Rebuild"
 
 for path in (PROJECT_ROOT, REBUILD_DIR):
@@ -27,8 +27,8 @@ for path in (PROJECT_ROOT, REBUILD_DIR):
     if path_text not in sys.path:
         sys.path.insert(0, path_text)
 
-from fss_simulation_pipeline import FSSImagePreprocessor, write_instance_dict
-from parameterized_json_to_cst import (
+from bayesian_optimization.pipelines.fss_simulation_pipeline import FSSImagePreprocessor, write_instance_dict
+from bayesian_optimization.simulation.parameterized_json_to_cst import (
     ParameterizedJsonCSTBuilder,
     load_instance_config,
     make_unique_project_name,
@@ -43,7 +43,7 @@ DEFAULT_INSTANCE_DICT: Dict[str, Any] = {
     "Instance": "Microstrip_Antenna",
     "mode": "S",
     "Units": ["mm", "GHz"],
-    "FSS_package": {
+    "Antenna_package": {
         "X": 36,
         "Y": 36,
         "f0": 6,
@@ -86,7 +86,7 @@ EDITOR_RUN_CONFIG: Dict[str, Any] = {
     "SIMPLIFY_TOLERANCE_PX": 1.0,
     "GEOMETRY_FRAME": "svg",
     "SKIP_FSS_CLEANUP": False,
-    "HONOR_INSTANCE_SKIP": False,
+    "HONOR_INSTANCE_SKIP": True,
     # 参数化模式 / Parameterization mode:
     # "standard": 当前稳定保底流程，repair_fig.png -> NewParams -> VTracer -> JSON。
     # "optimized_bs_seed": 上一版实验流程，repair_fig.png -> optimized_bs -> VTracer seed -> JSON。
@@ -440,7 +440,7 @@ class FSSParameterizedCSTPipeline:
 
     def _parameterize_repair_image_via_graph_local_primitives(self, repair_path: Path) -> tuple[Path, Dict[str, Any]]:
         """Run topology-aware graph local primitive parameterization."""
-        from geometry_graph_parameterizer import GraphBasedLocalSplineParameterizer
+        from bayesian_optimization.geometry.geometry_graph_parameterizer import GraphBasedLocalSplineParameterizer
 
         parameterizer = GraphBasedLocalSplineParameterizer(
             image_path=repair_path,
@@ -493,7 +493,7 @@ class FSSParameterizedCSTPipeline:
         B-spline is only an intermediate representation here. The final JSON is
         compact primitives plus fallback sampled points for CST compatibility.
         """
-        from geometry_driven_parameterizer import GeometryDrivenParameterizer
+        from bayesian_optimization.geometry.geometry_driven_parameterizer import GeometryDrivenParameterizer
 
         parameterizer = GeometryDrivenParameterizer(
             image_path=repair_path,
@@ -550,7 +550,7 @@ class FSSParameterizedCSTPipeline:
 
         from core.geometry.optimized_bspline_fitter import OptimizedBSplineFitter
         from core.image.initializer import ImageInitializer
-        from vtracer_python import TraceConfig, VTracerPython
+        from bayesian_optimization.tools.vtracer_python import TraceConfig, VTracerPython
 
         exp_dir = self.param_dir / "optimized_bs_seed"
         seeds_dir = exp_dir / "seeds"
@@ -746,7 +746,7 @@ class FSSParameterizedCSTPipeline:
 
     def _load_instance(self) -> Dict[str, Any]:
         if self.inline_instance is not None:
-            return copy.deepcopy(self.inline_instance)
+            return self._normalize_instance_schema(copy.deepcopy(self.inline_instance))
 
         if self.instance_json is None:
             raise ValueError("Either instance_json or inline_instance must be provided.")
@@ -756,7 +756,7 @@ class FSSParameterizedCSTPipeline:
             instance = json.load(file)
         if not isinstance(instance, dict):
             raise ValueError(f"Invalid instance JSON payload: {self.instance_json}")
-        return instance
+        return self._normalize_instance_schema(instance)
 
     def _layer_config(self, instance: Dict[str, Any]) -> Dict[str, Any]:
         layers = instance.get("layers", {})
@@ -775,6 +775,12 @@ class FSSParameterizedCSTPipeline:
             if material == "PEC":
                 return color_name
         return None
+
+    @staticmethod
+    def _normalize_instance_schema(instance: Dict[str, Any]) -> Dict[str, Any]:
+        if "Antenna_package" not in instance and "FSS_package" in instance:
+            instance["Antenna_package"] = copy.deepcopy(instance["FSS_package"])
+        return instance
 
     def _extract_optimized_bs_seed_records(self, contours_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Extract valid fitted polylines from OptimizedBSplineFitter output.
@@ -1190,9 +1196,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--honor-instance-skip",
+        dest="honor_instance_skip",
         action="store_true",
-        default=False,
+        default=True,
         help="Honor skip_fss_cleanup/skip_fss_repair/use_raw_image_directly flags from the instance JSON.",
+    )
+    parser.add_argument(
+        "--ignore-instance-skip",
+        dest="honor_instance_skip",
+        action="store_false",
+        help="Ignore skip_fss_cleanup/skip_fss_repair/use_raw_image_directly flags from the instance JSON.",
     )
     parser.add_argument(
         "--reuse-project-folder",

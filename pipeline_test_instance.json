@@ -1,17 +1,74 @@
 {
   "Folder_path": "D:\\CST2023proj\\autocst_MA\\2026051871433",
+
   "Instance": "Microstrip_Antenna",
+
   "mode": "S",
+
   "Units": [
     "mm",
     "GHz"
   ],
-  "FSS_package": {
+
+  "Antenna_package": {
     "X": 36,
     "Y": 36,
     "f0": 6,
     "f1": 14
   },
+
+  "Antenna_Type": {
+    "Main_Type": "Microstrip Patch",
+    "Feed_Type": "Microstrip Feed",
+    "Slot_Type": "Tooth-Like Slot",
+    "Polarization": "Linear",
+    "Operating_Mode": "Single Band Wideband"
+  },
+
+  "Paper_Performance": {
+
+    "Target_Resonances_GHz": [
+      10.0
+    ],
+
+    "Resonance_Count": 2,
+
+    "Bandwidth_10dB": {
+      "Start_GHz": 9.48,
+      "End_GHz": 10.53,
+      "Bandwidth_GHz": 1.05,
+      "Fractional_Bandwidth_Percent": 10.5
+    },
+
+    "Peak_Gain_dBi": 9.4,
+
+    "Beamwidth": {
+      "E_Plane_3dB_Deg": 78,
+      "H_Plane_3dB_Deg": 58
+    },
+
+    "Front_Back_Ratio_dB": 26,
+
+    "Cross_Polarization": {
+      "Co_Cross_Ratio_dB": 11
+    },
+
+    "Polarization": {
+      "Type": "Linear",
+      "Axis": "Y"
+    }
+  },
+
+  "Optimization_Targets": {
+
+    "Primary_Objective": "S11_Curve_Matching",
+
+    "Secondary_Objectives": [
+      "Bandwidth",
+      "Gain"
+    ]
+  },
+
   "layers": {
     "layer0": {
       "img_path": "D:\\cst2py_box\\Auto_py2cst_v0.71\\test\\test48.png",
@@ -22,7 +79,6 @@
         "white": "Rogers RT-duroid 5880 (loss free)",
         "gray": "PEC"
       }
-      
     }
   }
 }

@@ -15,7 +15,7 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", str(max(1, os.cpu_count() or 1)))
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 REBUILD_DIR = PROJECT_ROOT / "Rebuild"
 
 for path in (PROJECT_ROOT, REBUILD_DIR):
@@ -23,7 +23,7 @@ for path in (PROJECT_ROOT, REBUILD_DIR):
     if path_text not in sys.path:
         sys.path.insert(0, path_text)
 
-from fss_simulation_pipeline import FSSImagePreprocessor, write_instance_dict
+from bayesian_optimization.pipelines.fss_simulation_pipeline import FSSImagePreprocessor, write_instance_dict
 
 
 class ParameterizationOnlyRunner:
@@ -218,7 +218,7 @@ class ParameterizationOnlyRunner:
         return json_path
 
     def _parameterize_via_geometry_primitives(self, image_path: Path) -> tuple[Path, Dict[str, Any]]:
-        from geometry_driven_parameterizer import GeometryDrivenParameterizer
+        from bayesian_optimization.geometry.geometry_driven_parameterizer import GeometryDrivenParameterizer
 
         parameterizer = GeometryDrivenParameterizer(
             image_path=image_path,
@@ -252,7 +252,7 @@ class ParameterizationOnlyRunner:
         return json_path, status
 
     def _parameterize_via_graph_local_primitives(self, image_path: Path) -> tuple[Path, Dict[str, Any]]:
-        from geometry_graph_parameterizer import GraphBasedLocalSplineParameterizer
+        from bayesian_optimization.geometry.geometry_graph_parameterizer import GraphBasedLocalSplineParameterizer
 
         parameterizer = GraphBasedLocalSplineParameterizer(
             image_path=image_path,

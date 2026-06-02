@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 os.environ.setdefault("MPLBACKEND", "Agg")
 VERSIONED_LOCAL_PACKAGES_DIR = PROJECT_ROOT / f"local_packages_py{sys.version_info.major}{sys.version_info.minor}"
 if VERSIONED_LOCAL_PACKAGES_DIR.exists():
@@ -31,7 +33,7 @@ class BOConfig:
 
     initial_json: Path
     results_dir: Path = PROJECT_ROOT / "results"
-    pipeline_callable: str = "fss_parameterized_cst_pipeline:run_existing_pipeline"
+    pipeline_callable: str = "bayesian_optimization.pipelines.fss_parameterized_cst_pipeline:run_existing_pipeline"
     target_frequency_ghz: float = 2.4
     patch_length_min_mm: float = 15.0
     patch_length_max_mm: float = 40.0
@@ -480,7 +482,7 @@ def run_existing_fss_pipeline_adapter(json_path: Path) -> Path:
     对于已经提供 run_existing_pipeline(json_path) 的工程，可继续使用默认入口。
     """
 
-    from fss_parameterized_cst_pipeline import FSSParameterizedCSTPipeline
+    from bayesian_optimization.pipelines.fss_parameterized_cst_pipeline import FSSParameterizedCSTPipeline
 
     json_path = Path(json_path)
     run_name = f"bo_iteration_{json_path.stem}"
@@ -713,7 +715,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--pipeline-callable",
-        default="fss_parameterized_cst_pipeline:run_existing_pipeline",
+        default="bayesian_optimization.pipelines.fss_parameterized_cst_pipeline:run_existing_pipeline",
         help="已有 pipeline 入口，格式为 module:function，函数签名应为 func(json_path)。",
     )
     parser.add_argument("--target-frequency-ghz", type=float, default=2.4)

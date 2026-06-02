@@ -1,9 +1,23 @@
 from __future__ import annotations
 
+"""外挂式 Bayesian Optimization 主流程。
+
+本文件负责把已有 parameterization JSON 接入优化循环：
+curve_parameterization.json -> 变量采样 -> 几何变异 -> Python 几何验证
+-> CST build/simulation -> S11 解析 -> objective 记录 -> 下一轮采样。
+
+重要边界：
+- 不修改 CST Builder；
+- 不修改已有 parameterization backend；
+- 不修改 objective 定义；
+- 只在已有流程之后/之前做外挂式优化调度。
+"""
+
 import argparse
 import datetime as _datetime
 import json
 import logging
+import math
 import os
 import shutil
 import sys
@@ -14,13 +28,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 os.environ.setdefault("MPLBACKEND", "Agg")
 VERSIONED_LOCAL_PACKAGES_DIR = PROJECT_ROOT / f"local_packages_py{sys.version_info.major}{sys.version_info.minor}"
 if VERSIONED_LOCAL_PACKAGES_DIR.exists():
     local_packages_text = str(VERSIONED_LOCAL_PACKAGES_DIR)
     if local_packages_text not in sys.path:
-        sys.path.insert(0, local_packages_text)
+        sys.path.append(local_packages_text)
 
 MAX_ALLOWED_EVALUATIONS = 30
 
@@ -36,9 +52,9 @@ MAX_ALLOWED_EVALUATIONS = 30
 #    如果要看谐振频率和 S11 优化结果，必须设置 BUILD_ONLY=False。
 EDITOR_RUN_CONFIG: Dict[str, Any] = {
     "RUN_WITH_EDITOR_CONFIG": True,
-    "BASE_RUN_DIR": PROJECT_ROOT / "pipeline_runs" / "run_20260528_213437",
+    "BASE_RUN_DIR": PROJECT_ROOT / "pipeline_runs" / "run_20260528_213238",
     "OUTPUT_ROOT": PROJECT_ROOT / "optimization_runs",
-    "RUN_NAME": "bo_editor_full30_213437",
+    "RUN_NAME": "bo_editor_full30_213238",
     "LAYER_NAME": "layer0",
     "MAX_EVALUATIONS": 30,
     "TARGET_FREQUENCY_GHZ": 10.0,
@@ -57,20 +73,37 @@ EDITOR_RUN_CONFIG: Dict[str, Any] = {
     "OPTIMIZER_BACKEND": "optuna",
 }
 
-from geometry_validator import (  # noqa: E402
+from bayesian_optimization.geometry.geometry_validator import (  # noqa: E402
     GeometryValidationConfig,
     TopologySignature,
     geometry_complexity_metrics,
     make_topology_signature,
     validate_geometry,
 )
-from geometry_validation import validate_geometry as validate_and_repair_cst_geometry  # noqa: E402
-from optimization_objectives import ObjectiveBreakdown, ObjectiveWeights, evaluate_objective  # noqa: E402
-from primitive_mutator import DesignVariable, PrimitiveInventory, extract_design_variables, mutate_geometry  # noqa: E402
-from s11_parser import S11Metrics, find_latest_s11_file, parse_s11_file  # noqa: E402
+from bayesian_optimization.geometry.geometry_validation import validate_geometry as validate_and_repair_cst_geometry  # noqa: E402
+from bayesian_optimization.geometry.primitive_mutator import (  # noqa: E402
+    DesignVariable,
+    PrimitiveInventory,
+    extract_design_variables,
+    mutate_geometry,
+)
+from bayesian_optimization.optimization.optimization_objectives import (  # noqa: E402
+    ObjectiveBreakdown,
+    ObjectiveWeights,
+    evaluate_objective,
+    set_current_objective_profile,
+)
+from bayesian_optimization.optimization.objective_factory import create_objective_profile_from_instance_path  # noqa: E402
+from bayesian_optimization.optimization.s11_parser import S11Metrics, find_latest_s11_file, parse_s11_file  # noqa: E402
+
+
+# =============================================================================
+# CST handoff helper：把图结构 open edges 临时合并成 CST 可拉伸闭合 loop
+# =============================================================================
 
 
 def prepare_cst_handoff_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    # 【关键函数】仅在 BO->CST 交接前做临时 closed-loop handoff，不改原始 JSON schema。
     """把优化后的参数化 JSON 转成更适合 CST solid extrusion 的临时 handoff JSON。
 
     graph_local_primitives 常把一个闭合导体外轮廓拆成多条 open edge
@@ -104,6 +137,7 @@ def prepare_cst_handoff_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _merge_open_edge_components_to_closed_loops(components: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """把首尾相接的 open-edge components 合并成闭合 loop components。"""
     unused = set(range(len(components)))
     loops: List[Dict[str, Any]] = []
     loop_index = 0
@@ -168,6 +202,7 @@ def _find_next_component_index(
     unused: set,
     current_node: Any,
 ) -> Optional[int]:
+    """根据当前 loop 末端节点寻找下一条可连接 component。"""
     for index in sorted(unused):
         if components[index].get("start_node") == current_node:
             return index
@@ -175,6 +210,7 @@ def _find_next_component_index(
 
 
 def _component_handoff_points(component: Dict[str, Any]) -> List[List[float]]:
+    """读取 component 中用于 handoff 的二维点列。"""
     raw_points = (
         component.get("resampled_points")
         or component.get("fallback_points")
@@ -189,13 +225,21 @@ def _component_handoff_points(component: Dict[str, Any]) -> List[List[float]]:
 
 
 def _same_point(a: List[float], b: List[float], tolerance: float = 1e-6) -> bool:
+    """按 tolerance 判断两个二维点是否相同。"""
     return abs(float(a[0]) - float(b[0])) <= tolerance and abs(float(a[1]) - float(b[1])) <= tolerance
 
 
+# =============================================================================
+# Optimizer backend：Optuna 优先，skopt 作为可选回退
+# =============================================================================
+
+
 class OptunaBackend:
+    """Optuna TPESampler 后端封装，向主循环提供 ask/tell 接口。"""
     name = "optuna_tpe"
 
     def __init__(self, random_state: int, max_evaluations: int) -> None:
+        """初始化 Optuna study。"""
         import optuna
 
         sampler = optuna.samplers.TPESampler(
@@ -207,6 +251,7 @@ class OptunaBackend:
         self.study = optuna.create_study(direction="minimize", sampler=sampler)
 
     def ask(self, variables: List[DesignVariable]):
+        """根据当前变量空间请求下一组采样值。"""
         trial = self.study.ask()
         values = {
             variable.name: float(trial.suggest_float(variable.name, variable.lower, variable.upper))
@@ -215,9 +260,11 @@ class OptunaBackend:
         return trial, values
 
     def tell(self, token: Any, objective: float) -> None:
+        """把当前 evaluation 的 objective 回传给 Optuna。"""
         self.study.tell(token, float(objective))
 
     def trials(self) -> List[Dict[str, Any]]:
+        """导出 Optuna trial 历史，写入 optimizer_trials.json。"""
         return [
             {
                 "number": trial.number,
@@ -229,6 +276,7 @@ class OptunaBackend:
         ]
 
     def param_importances(self) -> Dict[str, float]:
+        """计算 Optuna 参数重要性；样本不足时可能抛异常，由调用方捕获。"""
         import optuna
 
         return {
@@ -238,9 +286,11 @@ class OptunaBackend:
 
 
 class SkoptBackend:
+    """scikit-optimize GP/EI 后端封装，作为 Optuna 不可用时的回退。"""
     name = "skopt_gp_ei"
 
     def __init__(self, random_state: int) -> None:
+        """初始化 skopt 依赖，并延迟创建 Optimizer 实例。"""
         from skopt import Optimizer
         from skopt.space import Real
 
@@ -251,6 +301,7 @@ class SkoptBackend:
         self._trials: List[Dict[str, Any]] = []
 
     def ask(self, variables: List[DesignVariable]):
+        """根据变量空间请求下一组 skopt 采样值。"""
         if self.optimizer is None:
             dimensions = [
                 self._real_cls(variable.lower, variable.upper, name=variable.name)
@@ -270,6 +321,7 @@ class SkoptBackend:
         return point, values
 
     def tell(self, token: Any, objective: float) -> None:
+        """把当前 evaluation 的 objective 回传给 skopt。"""
         self.optimizer.tell(token, float(objective))
         self._trials.append(
             {
@@ -281,14 +333,17 @@ class SkoptBackend:
         )
 
     def trials(self) -> List[Dict[str, Any]]:
+        """导出 skopt 已评估点与目标值。"""
         return list(self._trials)
 
     def param_importances(self) -> Dict[str, float]:
+        """skopt 后端暂无内置重要性，返回空字典。"""
         return {}
 
 
 @dataclass
 class OptimizationConfig:
+    """一次优化运行的配置参数。"""
     parameter_json: Path
     output_root: Path = PROJECT_ROOT / "optimization_runs"
     run_name: Optional[str] = None
@@ -311,6 +366,7 @@ class OptimizationConfig:
 
 @dataclass
 class EvaluationRecord:
+    """单轮 BO evaluation 的完整记录。"""
     evaluation: int
     variables: Dict[str, float]
     status: str
@@ -325,11 +381,13 @@ class EvaluationRecord:
     elapsed_seconds: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
+        """转换为可写入 JSON 的字典。"""
         return asdict(self)
 
 
 @dataclass
 class RunState:
+    """运行目录、日志器、history 与 best record 的状态容器。"""
     run_dir: Path
     valid_designs_dir: Path
     invalid_designs_dir: Path
@@ -343,6 +401,7 @@ class RunState:
 
 
 def load_json(path: Path) -> Dict[str, Any]:
+    """读取 UTF-8 JSON 文件。"""
     with path.open("r", encoding="utf-8") as file:
         payload = json.load(file)
     if not isinstance(payload, dict):
@@ -351,23 +410,25 @@ def load_json(path: Path) -> Dict[str, Any]:
 
 
 def write_json(path: Path, payload: Any) -> None:
+    """以 UTF-8 写入 JSON 文件，并自动创建父目录。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as file:
         json.dump(payload, file, ensure_ascii=False, indent=2)
 
 
 def setup_run(config: OptimizationConfig) -> RunState:
-    run_name = config.run_name or _datetime.datetime.now().strftime("opt_%Y%m%d_%H%M%S")
-    run_dir = config.output_root / run_name
+    """创建 optimization_runs/<run_name>/ 目录结构和日志系统。"""
+    run_name = config.run_name or "opt"
+    run_dir = make_unique_run_dir(config.output_root, run_name)
     valid_designs_dir = run_dir / "valid_designs"
     invalid_designs_dir = run_dir / "invalid_designs"
-    best_design_dir = run_dir / "best_design"
+    best_design_dir = run_dir / "best_designs"
     plots_dir = run_dir / "plots"
     logs_dir = run_dir / "logs"
     for directory in (valid_designs_dir, invalid_designs_dir, best_design_dir, plots_dir, logs_dir):
         directory.mkdir(parents=True, exist_ok=True)
 
-    logger = logging.getLogger(f"optimization_pipeline.{run_name}")
+    logger = logging.getLogger(f"optimization_pipeline.{run_dir.name}")
     logger.setLevel(logging.INFO)
     logger.handlers.clear()
     logger.propagate = False
@@ -393,10 +454,50 @@ def setup_run(config: OptimizationConfig) -> RunState:
     )
 
 
+def make_unique_run_dir(output_root: Path, run_name: str) -> Path:
+    """Create a unique per-run output directory.
+
+    Input: output root and requested logical run name.
+    Output: a newly created directory path that never reuses an existing run.
+    Algorithm purpose: prevent BO artifacts from overwriting previous records
+    when editor config or CLI uses the same run name repeatedly.
+    """
+
+    output_root.mkdir(parents=True, exist_ok=True)
+    safe_name = sanitize_run_name(run_name)
+    timestamp = _datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = output_root / f"{safe_name}_{timestamp}"
+    candidate = base
+    counter = 1
+    while candidate.exists():
+        candidate = output_root / f"{safe_name}_{timestamp}_{counter:02d}"
+        counter += 1
+    candidate.mkdir(parents=True, exist_ok=False)
+    return candidate
+
+
+def sanitize_run_name(run_name: str) -> str:
+    """Sanitize a logical run name for use as a folder name.
+
+    Input: requested run name.
+    Output: filesystem-safe non-empty run name.
+    Algorithm purpose: keep automatic unique folders portable and readable.
+    """
+
+    safe = "".join(char if char.isalnum() or char in ("-", "_") else "_" for char in str(run_name).strip())
+    return safe.strip("_") or "opt"
+
+
 def close_logger(logger: logging.Logger) -> None:
+    """关闭并移除当前 run logger 的 handler。"""
     for handler in list(logger.handlers):
         handler.close()
         logger.removeHandler(handler)
+
+
+# =============================================================================
+# 主优化流程：ask -> mutate -> validate -> CST -> S11 -> objective -> tell
+# =============================================================================
 
 
 class OptimizationPipeline:
@@ -407,16 +508,35 @@ class OptimizationPipeline:
     """
 
     def __init__(self, config: OptimizationConfig) -> None:
+        """加载输入 JSON、提取变量、创建优化器和参考拓扑。"""
         self.config = config
         self.state = setup_run(config)
         self.payload = load_json(config.parameter_json)
+        self.port_summary = load_json(config.port_summary) if config.port_summary is not None else None
         self.reference_signature = make_topology_signature(self.payload)
+
         self.validation_config = GeometryValidationConfig()
-        self.variables, self.inventory = extract_design_variables(self.payload)
+
+        self.variables, self.inventory = extract_design_variables(self.payload, port_summary=self.port_summary)
         self.objective_weights = ObjectiveWeights()
+        self.objective_profile = self._configure_objective_profile()
         self.optimizer = self._create_optimizer_backend()
 
+    def _configure_objective_profile(self):
+        """Load the objective profile from the new-format instance JSON."""
+
+        profile = create_objective_profile_from_instance_path(
+            self.config.instance_json,
+            fallback_target_frequency_ghz=self.config.target_frequency_ghz,
+            fallback_target_s11_db=self.config.target_s11_db,
+        )
+        self.config.target_frequency_ghz = float(profile.targets.resonance_ghz)
+        self.config.target_s11_db = float(profile.targets.s11_db)
+        set_current_objective_profile(profile)
+        return profile
+
     def run(self) -> Path:
+        """【关键函数】执行完整 BO 循环，并返回 run_dir。"""
         logger = self.state.logger
         try:
             self._write_run_metadata()
@@ -441,6 +561,7 @@ class OptimizationPipeline:
             for evaluation in range(1, self.config.max_evaluations + 1):
                 token, values = self.optimizer.ask(self.variables)
                 record = self.evaluate(evaluation, values)
+                geometry_rejected = self._is_geometry_rejection(record)
                 objective_for_optimizer = record.objective
                 if objective_for_optimizer is None:
                     objective_for_optimizer = self.objective_weights.cst_failure
@@ -451,7 +572,12 @@ class OptimizationPipeline:
                 else:
                     consecutive_cst_failures = 0
 
-                if record.objective is not None and (best_objective is None or record.objective < best_objective):
+                if geometry_rejected:
+                    logger.info(
+                        "evaluation=%03d geometry rejected; rollback applied, patience unchanged",
+                        record.evaluation,
+                    )
+                elif record.objective is not None and (best_objective is None or record.objective < best_objective):
                     best_objective = record.objective
                     no_improvement_count = 0
                     self._save_best(record)
@@ -465,18 +591,57 @@ class OptimizationPipeline:
                     break
 
             logger.info("优化结束，history: %s", self.state.history_path.resolve())
+            self._save_parameter_sensitivity()
+            self._save_optimization_animation()
             return self.state.run_dir
         finally:
             close_logger(logger)
 
     def evaluate(self, evaluation: int, variables: Dict[str, float]) -> EvaluationRecord:
+        """【关键函数】执行单轮 evaluation。
+
+        单轮流程：mutate -> validation -> CST build/simulation -> S11 parse -> objective。
+        任何失败都会转成 EvaluationRecord，不让整个优化程序崩溃。
+        """
         logger = self.state.logger
         start = time.perf_counter()
         logger.info("evaluation=%03d variables=%s", evaluation, variables)
 
-        mutated = mutate_geometry(self.payload, variables, self.inventory)
+        eval_dir = self.state.valid_designs_dir / f"eval_{evaluation:03d}"
+        eval_dir.mkdir(parents=True, exist_ok=True)
+        mutated = mutate_geometry(
+            self.payload,
+            variables,
+            self.inventory,
+            output_dir=eval_dir,
+            iteration=evaluation,
+            port_summary=self.port_summary,
+        )
         validation = validate_geometry(mutated, self.reference_signature, self.validation_config)
         geometry_metrics = geometry_complexity_metrics(mutated, validation)
+        deformation_meta = (mutated.get("optimization_metadata") or {}).get("feature_constrained_deformation") or {}
+        manufacturability = deformation_meta.get("manufacturability_report") or {}
+        if manufacturability:
+            geometry_metrics["manufacturability"] = manufacturability
+            geometry_metrics["spike_count"] = manufacturability.get("spike_count", 0)
+            geometry_metrics["manufacturability_penalty"] = manufacturability.get("penalty", 0.0)
+            if not bool(manufacturability.get("valid", True)):
+                validation.valid = False
+                validation.reasons.extend(
+                    [f"manufacturability: {error}" for error in manufacturability.get("errors", [])]
+                )
+        primitive_meta = (mutated.get("optimization_metadata") or {}).get("primitive_aware_mutation") or {}
+        if primitive_meta:
+            geometry_metrics["primitive_shape_quality_score"] = primitive_meta.get("shape_quality_score", 0.0)
+            geometry_metrics["primitive_junction_valid"] = (
+                primitive_meta.get("junction_validation", {}).get("valid", True)
+            )
+            geometry_metrics["primitive_aware_valid"] = primitive_meta.get("valid", True)
+            if not bool(primitive_meta.get("valid", True)):
+                validation.valid = False
+                validation.reasons.extend(
+                    [f"primitive-aware constraint: {error}" for error in primitive_meta.get("errors", [])]
+                )
 
         if not validation.valid:
             design_path = self.state.invalid_designs_dir / f"eval_{evaluation:03d}.json"
@@ -490,6 +655,10 @@ class OptimizationPipeline:
                 self.config.target_frequency_ghz,
                 self.config.target_s11_db,
                 self.objective_weights,
+            )
+            write_json(
+                self.state.invalid_designs_dir / f"eval_{evaluation:03d}_objective_breakdown.json",
+                objective.to_dict(),
             )
             record = EvaluationRecord(
                 evaluation=evaluation,
@@ -507,8 +676,6 @@ class OptimizationPipeline:
             logger.warning("rejected invalid geometry eval=%03d reasons=%s", evaluation, validation.reasons)
             return record
 
-        eval_dir = self.state.valid_designs_dir / f"eval_{evaluation:03d}"
-        eval_dir.mkdir(parents=True, exist_ok=True)
         design_path = eval_dir / "curve_parameterization.json"
         cst_handoff_payload = prepare_cst_handoff_payload(mutated)
         if cst_handoff_payload is not mutated:
@@ -526,16 +693,19 @@ class OptimizationPipeline:
 
         if not cst_geometry_report.valid:
             objective_value = self.objective_weights.invalid_geometry
+            objective_breakdown = {
+                "total": objective_value,
+                "failure_penalty": objective_value,
+                "reason": "cst_geometry_validation_failed",
+                "normalized_errors": {},
+            }
+            write_json(eval_dir / "objective_breakdown.json", objective_breakdown)
             record = EvaluationRecord(
                 evaluation=evaluation,
                 variables=variables,
                 status="invalid_geometry",
                 objective=objective_value,
-                objective_breakdown={
-                    "total": objective_value,
-                    "failure_penalty": objective_value,
-                    "reason": "cst_geometry_validation_failed",
-                },
+                objective_breakdown=objective_breakdown,
                 validation={
                     "topology_validation": validation.to_dict(),
                     "cst_geometry_validation": cst_geometry_report.to_dict(),
@@ -579,6 +749,7 @@ class OptimizationPipeline:
             self.objective_weights,
             cst_failed=cst_failed,
         )
+        write_json(eval_dir / "objective_breakdown.json", objective.to_dict())
 
         status = "completed"
         if not self.config.run_solver and not cst_failed:
@@ -610,7 +781,12 @@ class OptimizationPipeline:
         return record
 
     def _build_and_simulate(self, design_json: Path, eval_dir: Path) -> Path:
-        from parameterized_json_to_cst import CSTParametricConfig, ParameterizedJsonCSTBuilder, load_instance_config
+        """调用已有 ParameterizedJsonCSTBuilder 完成 CST 建模和可选仿真。"""
+        from bayesian_optimization.simulation.parameterized_json_to_cst import (
+            CSTParametricConfig,
+            ParameterizedJsonCSTBuilder,
+            load_instance_config,
+        )
 
         if self.config.instance_json is not None:
             cst_config = load_instance_config(self.config.instance_json, self.config.layer_name)
@@ -634,6 +810,7 @@ class OptimizationPipeline:
         return builder.build()
 
     def _create_optimizer_backend(self):
+        """根据配置创建 Optuna/skopt/auto 优化后端。"""
         backend = self.config.optimizer_backend.lower()
         if backend not in {"auto", "optuna", "skopt"}:
             raise ValueError("optimizer_backend must be one of: auto, optuna, skopt")
@@ -662,6 +839,7 @@ class OptimizationPipeline:
         no_improvement_count: int,
         consecutive_cst_failures: int,
     ) -> bool:
+        """检查 convergence、patience、invalid ratio、CST failure 等停止条件。"""
         logger = self.state.logger
         if record.objective is not None and record.objective <= self.config.convergence_threshold:
             logger.info(
@@ -673,30 +851,72 @@ class OptimizationPipeline:
         if no_improvement_count >= self.config.no_improvement_patience:
             logger.info("停止条件触发: no-improvement patience=%d", no_improvement_count)
             return True
-        invalid_count = sum(1 for item in self.state.history if item.status == "invalid_geometry")
-        invalid_ratio = invalid_count / max(1, len(self.state.history))
-        if len(self.state.history) >= 5 and invalid_ratio > self.config.max_invalid_ratio:
-            logger.warning("停止条件触发: invalid geometry ratio %.3f", invalid_ratio)
-            return True
         if consecutive_cst_failures >= self.config.max_consecutive_cst_failures:
             logger.warning("停止条件触发: consecutive CST failures=%d", consecutive_cst_failures)
             return True
         return False
 
+    def _is_geometry_rejection(self, record: EvaluationRecord) -> bool:
+        """判断当前 evaluation 是否为几何非法样本。
+
+        几何非法样本采用 rollback 语义：记录并反馈惩罚给优化器，但不更新 best，
+        也不消耗 no-improvement patience，以便 BO 尽量探索完整 30 轮空间。
+        """
+        return record.status == "invalid_geometry"
+
     def _save_best(self, record: EvaluationRecord) -> None:
+        """保存当前最优设计 JSON、record 和 S11 文件。"""
         self.state.best_record = record
-        self.state.best_design_dir.mkdir(parents=True, exist_ok=True)
+        snapshot_dir = self.state.best_design_dir / f"eval_{record.evaluation:03d}"
+        snapshot_dir.mkdir(parents=True, exist_ok=False)
         source = Path(record.design_json)
-        target = self.state.best_design_dir / "curve_parameterization.json"
+        target = snapshot_dir / "curve_parameterization.json"
         shutil.copy2(source, target)
-        write_json(self.state.best_design_dir / "best_record.json", record.to_dict())
+        write_json(snapshot_dir / "best_record.json", record.to_dict())
+        self._copy_best_visuals(source.parent, snapshot_dir)
+        write_json(
+            self.state.best_design_dir / "best_index.json",
+            {
+                "latest_best_evaluation": record.evaluation,
+                "latest_best_objective": record.objective,
+                "latest_best_snapshot": str(snapshot_dir),
+                "policy": "each improved best design is saved in a new eval_xxx snapshot folder",
+            },
+        )
 
         if record.s11_metrics:
             s11_path = Path(record.s11_metrics["s11_path"])
             if s11_path.exists():
-                shutil.copy2(s11_path, self.state.best_design_dir / s11_path.name)
+                shutil.copy2(s11_path, snapshot_dir / s11_path.name)
+
+    def _copy_best_visuals(self, eval_dir: Path, snapshot_dir: Path) -> None:
+        """Copy high-signal visual comparison artifacts into a best snapshot.
+
+        Input: source evaluation directory and destination best snapshot directory.
+        Output: copied PNG/JSON visual artifacts when present.
+        Algorithm purpose: make the final best-design folder directly show the
+        original-vs-optimized difference and selected optimization points.
+        """
+
+        debug_dir = eval_dir / "primitive_debug"
+        if not debug_dir.exists():
+            return
+        visual_dir = snapshot_dir / "visual_comparison"
+        visual_dir.mkdir(parents=True, exist_ok=True)
+        artifact_names = [
+            "optimization_before_after_comparison.png",
+            "selected_points_overlay.png",
+            "variable_effect_overlay.png",
+            "curvature_change_map.png",
+            "selected_optimization_points.json",
+        ]
+        for name in artifact_names:
+            source = debug_dir / name
+            if source.exists():
+                shutil.copy2(source, visual_dir / name)
 
     def _save_history(self) -> None:
+        """写入 optimization_history.json。"""
         write_json(
             self.state.history_path,
             {
@@ -707,6 +927,7 @@ class OptimizationPipeline:
         self._save_optimizer_trials()
 
     def _write_run_metadata(self) -> None:
+        """写入 run_metadata.json，记录输入、变量、目标和优化器配置。"""
         metadata = {
             "config": {
                 "parameter_json": str(self.config.parameter_json),
@@ -719,11 +940,29 @@ class OptimizationPipeline:
                 "geometry_frame": self.config.geometry_frame,
                 "simplify_tolerance_px": self.config.simplify_tolerance_px,
                 "optimizer_backend": self.config.optimizer_backend,
+                "storage_policy": {
+                    "run_directory": "always create a timestamped unique run folder",
+                    "best_designs": "save each improved best in best_designs/eval_xxx without overwriting old snapshots",
+                    "latest_best_index": "best_designs/best_index.json points to the latest best snapshot",
+                },
+                "invalid_geometry_policy": {
+                    "action": "rollback_and_continue",
+                    "optimizer_feedback": "large_penalty",
+                    "skip_cst": True,
+                    "counts_toward_no_improvement_patience": False,
+                    "counts_toward_early_stop_invalid_ratio": False,
+                    "max_invalid_ratio_retained_for_compatibility": self.config.max_invalid_ratio,
+                },
             },
             "design_variables": [variable.to_dict() for variable in self.variables],
             "primitive_inventory": self.inventory.to_dict(),
             "reference_topology": self.reference_signature.to_dict(),
             "objective_weights": self.objective_weights.to_dict(),
+            "objective_profile": {
+                "name": self.objective_profile.name,
+                "targets": self.objective_profile.targets.to_dict(),
+                "source": self.objective_profile.targets.source,
+            },
             "optimizer": {
                 "backend": self.optimizer.name,
                 "requested_backend": self.config.optimizer_backend,
@@ -735,6 +974,7 @@ class OptimizationPipeline:
         self._save_optimizer_trials()
 
     def _save_plots(self) -> None:
+        """【关键函数】保存 objective、状态、谐振频率、S11 等优化曲线。"""
         try:
             import matplotlib
 
@@ -828,7 +1068,7 @@ class OptimizationPipeline:
         if not s11_records:
             return
         best = min(s11_records, key=lambda item: float(item.objective or 1e9))
-        from s11_parser import read_s11_rows
+        from bayesian_optimization.optimization.s11_parser import read_s11_rows
 
         rows = read_s11_rows(Path(best.s11_metrics["s11_path"]))
         if not rows:
@@ -845,6 +1085,7 @@ class OptimizationPipeline:
         plt.close(fig)
 
     def _save_optimizer_importance_plot(self, plt: Any) -> None:
+        """保存优化器自身提供的参数重要性图。"""
         try:
             importances = self.optimizer.param_importances()
         except Exception as exc:
@@ -865,10 +1106,150 @@ class OptimizationPipeline:
         plt.close(fig)
 
     def _save_optimizer_trials(self) -> None:
+        """保存优化器 trial 历史。"""
         write_json(self.state.run_dir / "optimizer_trials.json", self.optimizer.trials())
+
+    def _save_parameter_sensitivity(self) -> None:
+        """优化结束后做轻量变量敏感度统计，不改变 BO 目标函数。"""
+        records = [record for record in self.state.history if record.objective is not None]
+        if len(records) < 2:
+            self.state.logger.info("parameter sensitivity skipped: fewer than 2 records")
+            return
+
+        variable_names = [variable.name for variable in self.variables]
+        rows: List[Dict[str, Any]] = []
+        for name in variable_names:
+            objective_corr = pearson_correlation(
+                [float(record.variables.get(name, 0.0)) for record in records],
+                [float(record.objective or 0.0) for record in records],
+            )
+            resonance_pairs = [
+                (
+                    float(record.variables.get(name, 0.0)),
+                    float(record.s11_metrics["resonant_frequency_ghz"]),
+                )
+                for record in records
+                if record.s11_metrics and record.s11_metrics.get("resonant_frequency_ghz") is not None
+            ]
+            s11_pairs = [
+                (
+                    float(record.variables.get(name, 0.0)),
+                    float(record.s11_metrics.get("minimum_s11_db", 0.0)),
+                )
+                for record in records
+                if record.s11_metrics and record.s11_metrics.get("minimum_s11_db") is not None
+            ]
+            resonance_corr = pearson_correlation(
+                [item[0] for item in resonance_pairs],
+                [item[1] for item in resonance_pairs],
+            )
+            s11_corr = pearson_correlation(
+                [item[0] for item in s11_pairs],
+                [item[1] for item in s11_pairs],
+            )
+            sensitivity_score = sum(
+                abs(value)
+                for value in (objective_corr, resonance_corr, s11_corr)
+                if value is not None
+            )
+            rows.append(
+                {
+                    "variable": name,
+                    "objective_correlation": objective_corr,
+                    "resonant_frequency_correlation": resonance_corr,
+                    "minimum_s11_correlation": s11_corr,
+                    "sensitivity_score": sensitivity_score,
+                    "sample_count": len(records),
+                    "resonance_sample_count": len(resonance_pairs),
+                }
+            )
+
+        rows.sort(key=lambda item: float(item["sensitivity_score"]), reverse=True)
+        write_json(self.state.run_dir / "most_sensitive_variables.json", rows)
+
+        try:
+            import matplotlib
+
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+        except Exception as exc:
+            self.state.logger.info("parameter sensitivity heatmap skipped: %s", exc)
+            return
+
+        top_rows = rows[: min(30, len(rows))]
+        if not top_rows:
+            return
+        metrics = [
+            ("objective_correlation", "Objective"),
+            ("resonant_frequency_correlation", "f_res"),
+            ("minimum_s11_correlation", "min S11"),
+        ]
+        matrix = [
+            [float(row[key]) if row.get(key) is not None else 0.0 for key, _ in metrics]
+            for row in top_rows
+        ]
+        fig_height = max(4.8, 0.32 * len(top_rows) + 1.5)
+        fig, ax = plt.subplots(figsize=(8.5, fig_height))
+        image = ax.imshow(matrix, aspect="auto", cmap="coolwarm", vmin=-1.0, vmax=1.0)
+        ax.set_xticks(list(range(len(metrics))))
+        ax.set_xticklabels([label for _, label in metrics])
+        ax.set_yticks(list(range(len(top_rows))))
+        ax.set_yticklabels([row["variable"] for row in top_rows], fontsize=7)
+        ax.set_title("Parameter Sensitivity Heatmap")
+        fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04, label="Pearson correlation")
+        fig.tight_layout()
+        fig.savefig(self.state.plots_dir / "parameter_sensitivity_heatmap.png", dpi=180)
+        plt.close(fig)
+
+    def _save_optimization_animation(self) -> None:
+        """把每轮 geometry_before_after.png 合成为优化过程 GIF。"""
+        try:
+            import imageio.v2 as imageio
+        except Exception as exc:
+            self.state.logger.info("optimization animation skipped: %s", exc)
+            return
+
+        frames = []
+        for record in self.state.history:
+            frame_path = (
+                self.state.valid_designs_dir
+                / f"eval_{record.evaluation:03d}"
+                / "deformation_debug"
+                / "geometry_before_after.png"
+            )
+            if frame_path.exists():
+                frames.append(imageio.imread(frame_path))
+        if not frames:
+            return
+        output_path = self.state.plots_dir / "optimization_animation.gif"
+        imageio.mimsave(output_path, frames, duration=0.8)
+        self.state.logger.info("optimization animation saved: %s", output_path)
+
+
+def pearson_correlation(xs: List[float], ys: List[float]) -> Optional[float]:
+    """计算轻量 Pearson 相关系数，用于变量敏感度诊断。"""
+    pairs = [
+        (float(x), float(y))
+        for x, y in zip(xs, ys)
+        if math.isfinite(float(x)) and math.isfinite(float(y))
+    ]
+    if len(pairs) < 2:
+        return None
+    x_values = [item[0] for item in pairs]
+    y_values = [item[1] for item in pairs]
+    x_mean = sum(x_values) / len(x_values)
+    y_mean = sum(y_values) / len(y_values)
+    numerator = sum((x - x_mean) * (y - y_mean) for x, y in pairs)
+    x_var = sum((x - x_mean) ** 2 for x in x_values)
+    y_var = sum((y - y_mean) ** 2 for y in y_values)
+    denominator = math.sqrt(x_var * y_var)
+    if denominator <= 1e-15:
+        return None
+    return numerator / denominator
 
 
 def parse_args() -> argparse.Namespace:
+    """解析命令行参数。"""
     parser = argparse.ArgumentParser(
         description="Additive optimization layer between curve_parameterization.json and CST simulation."
     )
@@ -899,6 +1280,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_config(args: argparse.Namespace) -> OptimizationConfig:
+    """把 argparse 结果转换为 OptimizationConfig。"""
     return OptimizationConfig(
         parameter_json=args.parameter_json,
         output_root=args.output_root,
@@ -922,6 +1304,7 @@ def build_config(args: argparse.Namespace) -> OptimizationConfig:
 
 
 def build_config_from_editor_config(editor_config: Dict[str, Any]) -> OptimizationConfig:
+    """把 EDITOR_RUN_CONFIG 转换为 OptimizationConfig，方便 IDE 直接运行。"""
     base_run_dir = Path(editor_config["BASE_RUN_DIR"])
     parameter_json = base_run_dir / "02_parameterization" / "curve_parameterization.json"
     instance_json = base_run_dir / "prepared_instance.json"
@@ -952,6 +1335,7 @@ def build_config_from_editor_config(editor_config: Dict[str, Any]) -> Optimizati
 
 
 def validate_config(config: OptimizationConfig) -> None:
+    """检查输入路径、最大轮数和必要 CST 参数。"""
     if not config.parameter_json.exists():
         raise FileNotFoundError(f"parameter json not found: {config.parameter_json}")
     if config.instance_json is not None and not config.instance_json.exists():
@@ -971,6 +1355,7 @@ def validate_config(config: OptimizationConfig) -> None:
 
 
 def main() -> None:
+    """命令行入口。"""
     args = parse_args()
     config = build_config(args)
     validate_config(config)
@@ -980,6 +1365,7 @@ def main() -> None:
 
 
 def run_from_editor_config() -> None:
+    """IDE 直接运行入口，使用 EDITOR_RUN_CONFIG。"""
     config = build_config_from_editor_config(EDITOR_RUN_CONFIG)
     validate_config(config)
     print("[OptimizationPipeline] RUN_WITH_EDITOR_CONFIG=True")
@@ -989,6 +1375,8 @@ def run_from_editor_config() -> None:
     print(f"[OptimizationPipeline] run_name:        {config.run_name}")
     print(f"[OptimizationPipeline] build_only:      {not config.run_solver}")
     print(f"[OptimizationPipeline] optimizer:       {config.optimizer_backend}")
+
+    ###关键点提取在OptimizationPipeline的初始化中
     pipeline = OptimizationPipeline(config)
     run_dir = pipeline.run()
     print(f"[OptimizationPipeline] DONE: {run_dir}")

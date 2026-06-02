@@ -11,9 +11,13 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from bayesian_optimization.simulation.cst_library_path import ensure_cst_library_path
+
+ensure_cst_library_path()
 
 import Simulink.handle as ch
 import cst.results
@@ -984,7 +988,7 @@ def load_instance_config(instance_json_path: Path | str, layer_name: str) -> CST
     if not isinstance(instance, dict):
         raise ValueError(f"Invalid instance JSON payload: {instance_path}")
 
-    package = instance.get("FSS_package", {})
+    package = _resolve_package_config(instance)
     layers = instance.get("layers", {})
     if layer_name not in layers:
         available = ", ".join(str(name) for name in layers.keys())
@@ -1054,6 +1058,14 @@ def _find_first_non_pec_material(col_mats: Dict[str, str]) -> Optional[str]:
         if material != "PEC":
             return material
     return None
+
+
+def _resolve_package_config(instance: Dict[str, Any]) -> Dict[str, Any]:
+    for key in ("Antenna_package", "FSS_package"):
+        package = instance.get(key)
+        if isinstance(package, dict):
+            return package
+    return {}
 
 
 def _list_get(values: Sequence[Any], index: int, default: Any) -> Any:

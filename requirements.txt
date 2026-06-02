@@ -1,7 +1,0 @@
-optuna==4.8.0; python_version >= "3.9"
-optuna==2.10.1; python_version < "3.9"
-scikit-optimize==0.10.2
-matplotlib>=2.2
-numpy
-shapely
-scipy

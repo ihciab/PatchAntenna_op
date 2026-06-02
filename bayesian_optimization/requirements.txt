@@ -1,0 +1,28 @@
+# Recommended Python version: 3.9+
+# External application dependency (not installed by pip): CST Studio Suite
+
+# Core numerical / geometry stack
+numpy
+scipy
+shapely
+pandas
+
+# Image / visualization
+matplotlib>=3.6
+imageio
+opencv-python
+Pillow
+scikit-image
+
+# Document / HTTP
+requests
+PyMuPDF
+PyYAML
+
+# Optimization
+optuna==4.8.0; python_version >= "3.9"
+optuna==2.10.1; python_version < "3.9"
+scikit-optimize==0.10.2
+
+
+

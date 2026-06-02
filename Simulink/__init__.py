@@ -1,12 +1,55 @@
 import json
+import os
 import sys
 from pathlib import Path
+from typing import Dict, List, Optional
 
 __version__ = "0.7"
 __author__ = "Zhijin momo Chen"
 
 _config = None
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
+DEFAULT_CST_LIBRARY_PATH = Path(r"D:\CST Studio Suite 2023\AMD64\python_cst_libraries")
+ENV_CST_LIBRARY_PATH = "CST_PYTHON_LIBRARIES"
+
+
+def _candidate_cst_library_paths(config_path: Optional[str]) -> List[Path]:
+    paths: List[Path] = []
+    for value in (os.environ.get(ENV_CST_LIBRARY_PATH), config_path, str(DEFAULT_CST_LIBRARY_PATH)):
+        if not value:
+            continue
+        path = Path(value)
+        if path not in paths:
+            paths.append(path)
+    return paths
+
+
+def _import_cst_from_config(config_data: Dict) -> str:
+    checked_paths: List[str] = []
+    config_path = config_data.get("cstModuleBase", {}).get("absolute_path")
+
+    for cst_path in _candidate_cst_library_paths(config_path):
+        checked_paths.append(str(cst_path))
+        if not cst_path.exists():
+            continue
+        cst_path_text = str(cst_path)
+        if cst_path_text not in sys.path:
+            sys.path.insert(0, cst_path_text)
+        try:
+            import cst  # noqa: F401
+        except ModuleNotFoundError:
+            continue
+
+        config_data.setdefault("cstModuleBase", {})["absolute_path"] = cst_path_text
+        if config_path != cst_path_text:
+            with CONFIG_PATH.open("w", encoding="utf-8") as f:
+                json.dump(config_data, f, indent=2, ensure_ascii=False)
+        return cst_path_text
+
+    raise ModuleNotFoundError(
+        "python_cst_libraries was not found. Checked paths: "
+        + ", ".join(checked_paths)
+    )
 
 try:
     with CONFIG_PATH.open("r", encoding="utf-8") as f:
@@ -20,28 +63,7 @@ except json.JSONDecodeError as exc:
         exc.pos,
     ) from exc
 else:
-    _config = _config_data["cstModuleBase"]["absolute_path"]
-    print(_config)
-    try:
-        sys.path.append(_config)
-        import cst  # noqa: F401
-    except ModuleNotFoundError:
-        print("python_cst_libraries was not found")
-        cst_lib_path = input(
-            "Please enter the absolute path to python_cst_libraries: "
-        )
-        try:
-            sys.path.append(cst_lib_path)
-            import cst  # noqa: F401
-        except ModuleNotFoundError:
-            print("python_cst_libraries was not found")
-            input("Press any key to exit...")
-        else:
-            print("Updating config file")
-            _config_data["cstModuleBase"]["absolute_path"] = cst_lib_path
-            with CONFIG_PATH.open("w", encoding="utf-8") as f:
-                json.dump(_config_data, f, indent=2, ensure_ascii=False)
-            print("Imported cst module")
+    _config = _import_cst_from_config(_config_data)
 
 from .handle import *
 

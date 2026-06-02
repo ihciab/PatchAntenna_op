@@ -9,7 +9,7 @@ from pathlib import Path
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 REBUILD_DIR = PROJECT_ROOT / "Rebuild"
 
 DEFAULT_BGR_COLORS = {
@@ -319,6 +319,7 @@ class InstanceDictAdapter:
 
     def build_simulation_instance(self, raw_instance_dict):
         instance_dict = copy.deepcopy(raw_instance_dict)
+        self._apply_legacy_package_alias(instance_dict)
 
         for layer_name, layer_cfg in instance_dict["layers"].items():
             raw_img_path = layer_cfg["img_path"]
@@ -334,6 +335,11 @@ class InstanceDictAdapter:
             layer_cfg["img_path"] = processed_img_path
 
         return instance_dict
+
+    @staticmethod
+    def _apply_legacy_package_alias(instance_dict):
+        if "FSS_package" not in instance_dict and "Antenna_package" in instance_dict:
+            instance_dict["FSS_package"] = copy.deepcopy(instance_dict["Antenna_package"])
 
 
 class FSSSimulationPipeline:

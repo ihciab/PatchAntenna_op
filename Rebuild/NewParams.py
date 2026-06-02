@@ -531,7 +531,7 @@ class CurveParameterizer:
             self.parameterize()
 
     def parameterize(self) -> List[Dict[str, Any]]:
-        from vtracer_python import TraceConfig, VTracerPython
+        from bayesian_optimization.tools.vtracer_python import TraceConfig, VTracerPython
 
         t0 = time.perf_counter()
         self.save_dir.mkdir(parents=True, exist_ok=True)
