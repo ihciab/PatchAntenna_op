@@ -118,8 +118,9 @@ def extract_design_variables(
     deformation_plan = None
     try:
         primitive_analysis = analyze_primitives(payload, port_summary=port_summary)
-        primitive_variables = generate_primitive_variables(primitive_analysis, max_dimensions=12)
+        primitive_variables = generate_primitive_variables(primitive_analysis)
         if primitive_variables:
+            primitive_summary = primitive_analysis.get("summary", {}) or {}
             variables = [
                 DesignVariable(
                     name=variable.name,
@@ -134,13 +135,15 @@ def extract_design_variables(
                 "mode": "primitive_aware_shape_optimization",
                 "analysis": primitive_analysis,
                 "variables": [variable.to_dict() for variable in primitive_variables],
+                "all_parameterized_lines_optimized": True,
+                "line_normal_offsets_only": True,
                 "raw_sampled_points_optimized": False,
                 "single_control_point_offsets_enabled": False,
             }
             inventory = PrimitiveInventory(
-                line_count=line_count,
-                arc_count=arc_count,
-                spline_count=spline_count,
+                line_count=int(primitive_summary.get("line_count", line_count)),
+                arc_count=int(primitive_summary.get("curve_count", arc_count)),
+                spline_count=int(primitive_summary.get("bspline_count", spline_count)),
                 component_count=len(payload.get("components", []) or []),
                 bbox=bbox,
                 center=(cx, cy),

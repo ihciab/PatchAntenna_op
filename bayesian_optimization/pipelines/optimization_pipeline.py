@@ -990,7 +990,11 @@ class OptimizationPipeline:
 
         evaluations = [record.evaluation for record in completed]
         objectives = [float(record.objective) for record in completed]
-        scales = [float(record.variables.get("global_scale", 1.0)) for record in completed]
+        primary_variable_name = self.variables[0].name if self.variables else "design_variable"
+        primary_variable_values = [
+            float(record.variables.get(primary_variable_name, 0.0))
+            for record in completed
+        ]
         colors = ["#dc2626" if record.status != "completed" else "#2563eb" for record in completed]
 
         fig, ax = plt.subplots(figsize=(8, 4.8))
@@ -1005,8 +1009,8 @@ class OptimizationPipeline:
         plt.close(fig)
 
         fig, ax = plt.subplots(figsize=(8, 4.8))
-        ax.scatter(scales, objectives, c=colors, s=52)
-        ax.set_xlabel("global_scale")
+        ax.scatter(primary_variable_values, objectives, c=colors, s=52)
+        ax.set_xlabel(primary_variable_name)
         ax.set_ylabel("Objective")
         ax.set_title("Design Variable vs Objective")
         ax.grid(True, alpha=0.3)
