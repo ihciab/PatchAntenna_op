@@ -31,6 +31,8 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
         max_local_spline_rms_error_px: float = 2.0,
         max_local_spline_length_shrink_ratio: float = 0.04,
         force_line_primitives: bool = False,
+        line_triplet_merge_distance_px: float = 3.0,
+        line_triplet_merge_max_angle_deg: float = 35.0,
         **kwargs: Any,
     ):
         super().__init__(image_path=image_path, save_dir=save_dir, **kwargs)
@@ -55,6 +57,8 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
         self.graph_curvature_split_percentile = float(graph_curvature_split_percentile)
         self.max_local_spline_rms_error_px = float(max_local_spline_rms_error_px)
         self.max_local_spline_length_shrink_ratio = float(max_local_spline_length_shrink_ratio)
+        self.line_triplet_merge_distance_px = float(line_triplet_merge_distance_px)
+        self.line_triplet_merge_max_angle_deg = float(line_triplet_merge_max_angle_deg)
         self.last_status = {
             "fallback": False,
             "fallback_reason": "",
@@ -178,6 +182,10 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
         if not validation.get("valid", False):
             raise ValueError(f"graph topology validation failed: {validation.get('issues', [])}")
 
+        global_line_triplet_merge: Dict[str, Any] = {}
+        if self.force_line_primitives:
+            components, global_line_triplet_merge = self._merge_line_only_degree2_chains(split_graph, components)
+
         print("[GraphBasedLocalSplineParameterizer] stage 6/7: graph-aware JSON export")
         aggregate_metrics = self._aggregate_metrics(components)
         aggregate_metrics.update(
@@ -221,6 +229,7 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
                 "edge_selection": self.edge_selection_diagnostics,
                 "line_priority": "forced line only" if self.force_line_primitives else "line > arc > local_spline",
                 "line_only_parameterization": self.force_line_primitives,
+                "global_line_triplet_merge": global_line_triplet_merge,
                 "global_spline_used": False,
             },
             "stages": {
@@ -478,11 +487,11 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
         primitive["fallback_points"] = primitive.get("points", pts.tolist()) if self.force_line_primitives else pts.tolist()
         return primitive
 
-    def fit_local_line_primitives(self, edge: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[List[float]]]:
+    def fit_local_line_primitives(self, edge: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[List[float]], Dict[str, Any]]:
         """Approximate one graph edge with sampled line primitives only.
 
         Input: graph edge with ordered_points.
-        Output: list of line primitives plus the polyline vertices they cover.
+        Output: line primitives, polyline vertices, and merge diagnostics.
         Algorithm purpose: keep graph-local topology while replacing arc/spline
         candidates with a piecewise-linear approximation instead of one chord.
         """
@@ -500,6 +509,7 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
         if len(indices) < 2:
             indices = [0, len(pts) - 1]
 
+        indices, triplet_merge_report = self._merge_close_triplet_indices(pts, indices)
         vertices = pts[indices]
         primitives: List[Dict[str, Any]] = []
         for segment_id, (start_i, end_i) in enumerate(zip(indices[:-1], indices[1:]), start=1):
@@ -535,6 +545,7 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
                 "start_node": int(edge["start_node"]),
                 "end_node": int(edge["end_node"]),
                 "features": features,
+                "line_triplet_merge": triplet_merge_report,
             }
             primitive["parameters"] = self._primitive_parameters(primitive)
             primitive["fallback_points"] = primitive["points"]
@@ -546,7 +557,120 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
 
         if not primitives:
             raise ValueError(f"edge {edge.get('id')} produced no line primitives")
-        return primitives, vertices.tolist()
+        return primitives, vertices.tolist(), triplet_merge_report
+
+    def _merge_close_triplet_indices(self, points: Any, indices: Sequence[int]) -> Tuple[List[int], Dict[str, Any]]:
+        """Remove redundant middle points from close, same-trend triplets.
+
+        Input: original ordered points and selected polyline vertex indices.
+        Output: updated vertex indices plus a JSON-safe merge report.
+        Algorithm purpose: clean dense local samples in graph_local_lines while
+        preserving true corners and sign-changing slope transitions.
+        """
+
+        pts = self._clean_points(points)
+        ordered = sorted(set(int(index) for index in indices if 0 <= int(index) < len(pts)))
+        if len(ordered) <= 2:
+            return ordered, {
+                "enabled": True,
+                "merged_count": 0,
+                "distance_threshold_px": self.line_triplet_merge_distance_px,
+                "max_angle_deg": self.line_triplet_merge_max_angle_deg,
+                "removed_indices": [],
+            }
+
+        removed: List[Dict[str, Any]] = []
+        cursor = 0
+        while cursor <= len(ordered) - 3:
+            a_idx, b_idx, c_idx = ordered[cursor], ordered[cursor + 1], ordered[cursor + 2]
+            source_span = pts[a_idx : c_idx + 1]
+            should_merge, reason = self._should_merge_triplet(pts[a_idx], pts[b_idx], pts[c_idx], source_span)
+            if should_merge:
+                removed.append(
+                    {
+                        "previous_index": int(a_idx),
+                        "removed_index": int(b_idx),
+                        "next_index": int(c_idx),
+                        "reason": reason,
+                    }
+                )
+                ordered.pop(cursor + 1)
+                cursor = max(0, cursor - 1)
+                continue
+            cursor += 1
+
+        return ordered, {
+            "enabled": True,
+            "merged_count": len(removed),
+            "distance_threshold_px": self.line_triplet_merge_distance_px,
+            "max_angle_deg": self.line_triplet_merge_max_angle_deg,
+            "removed_indices": removed,
+        }
+
+    def _should_merge_triplet(self, a: Point, b: Point, c: Point, source_span: Any = None) -> Tuple[bool, str]:
+        """Return whether b is redundant between close same-trend points a/c."""
+
+        import numpy as np
+
+        pa = np.asarray(a, dtype=np.float64)
+        pb = np.asarray(b, dtype=np.float64)
+        pc = np.asarray(c, dtype=np.float64)
+        ab = pb - pa
+        bc = pc - pb
+        d_ab = float(np.linalg.norm(ab))
+        d_bc = float(np.linalg.norm(bc))
+        d_ac = float(np.linalg.norm(pc - pa))
+        threshold = max(0.0, self.line_triplet_merge_distance_px)
+        if d_ab <= 1e-9 or d_bc <= 1e-9:
+            return True, "duplicate_or_nearly_duplicate_neighbor"
+
+        slope_sign_ab = self._slope_sign(ab)
+        slope_sign_bc = self._slope_sign(bc)
+        if slope_sign_ab != 0 and slope_sign_bc != 0 and slope_sign_ab != slope_sign_bc:
+            return False, "slope_sign_flip"
+
+        # Sliding triplet rule: check 123, then 234, then 345...
+        # For local dense points, slope sign is the corner guard; a large local
+        # angle alone should not keep a redundant point.
+        close_triplet = (
+            d_ab <= 2.0 * threshold
+            and d_bc <= 2.0 * threshold
+            and d_ac <= 4.0 * threshold
+        )
+        if close_triplet:
+            return True, "sliding_close_triplet_same_slope"
+
+        dot = float(np.dot(ab, bc))
+        if dot <= 0.0:
+            return False, "direction_reversal"
+        denom = max(1e-12, d_ab * d_bc)
+        cos_angle = max(-1.0, min(1.0, dot / denom))
+        angle_deg = math.degrees(math.acos(cos_angle))
+        if angle_deg > self.line_triplet_merge_max_angle_deg:
+            return False, "angle_change_too_large"
+
+        span = source_span if source_span is not None else np.vstack([pa, pb, pc])
+        errors = self._line_errors(span, pa, pc)
+        max_span_error = float(np.max(errors)) if len(errors) else 0.0
+        chord_error_threshold = min(
+            max(0.8, self.line_tolerance_px),
+            max(0.8, threshold),
+        )
+        has_local_micro_segment = min(d_ab, d_bc) <= max(threshold, self.line_tolerance_px)
+        if has_local_micro_segment and max_span_error <= chord_error_threshold:
+            return True, "chord_aligned_micro_start_point"
+
+        return False, "not_close_or_chord_aligned_triplet"
+
+    @staticmethod
+    def _slope_sign(vector: Any, eps: float = 1e-9) -> int:
+        """Return sign of dy/dx without dividing, treating axis-aligned as 0."""
+
+        dx = float(vector[0])
+        dy = float(vector[1])
+        if abs(dx) <= eps or abs(dy) <= eps:
+            return 0
+        return 1 if dx * dy > 0.0 else -1
 
     def _should_accept_relaxed_fss_line(self, line: Dict[str, Any], features: Dict[str, Any]) -> bool:
         """Accept slightly noisy long FSS straight traces as lines.
@@ -633,7 +757,7 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
         components: List[Dict[str, Any]] = []
         for component_id, edge in enumerate(graph.get("edges", []), start=1):
             if self.force_line_primitives:
-                primitives, points = self.fit_local_line_primitives(edge)
+                primitives, points, triplet_merge_report = self.fit_local_line_primitives(edge)
             else:
                 primitive = self.fit_local_primitive(edge)
                 primitive["segment_id"] = 1
@@ -644,6 +768,7 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
                 )
                 primitives = [primitive]
                 points = primitive.get("fallback_points") or edge.get("ordered_points") or []
+                triplet_merge_report = {}
             component = {
                 "component_id": component_id,
                 "source_edge_id": int(edge["id"]),
@@ -659,10 +784,246 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
                 "segments": primitives,
                 "metrics": self._component_metrics(points, primitives),
             }
+            if triplet_merge_report:
+                component["line_triplet_merge"] = triplet_merge_report
             components.append(component)
             self._write_json(self.local_fit_dir / f"edge_{int(edge['id']):04d}_fit.json", component)
             self._write_edge_fit_preview(self.local_fit_dir / f"edge_{int(edge['id']):04d}_fit.png", edge, primitives)
         return components
+
+    def _merge_line_only_degree2_chains(
+        self,
+        graph: Dict[str, Any],
+        components: Sequence[Dict[str, Any]],
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Apply sliding triplet cleanup across degree-2 component boundaries."""
+
+        node_refs: Dict[int, List[int]] = {}
+        for index, component in enumerate(components):
+            node_refs.setdefault(int(component["start_node"]), []).append(index)
+            node_refs.setdefault(int(component["end_node"]), []).append(index)
+
+        if not components or any(len(refs) != 2 for refs in node_refs.values()):
+            return list(components), {
+                "enabled": True,
+                "applied": False,
+                "reason": "graph_contains_non_degree2_nodes",
+                "merged_count": 0,
+            }
+
+        remaining = set(range(len(components)))
+        merged_components: List[Dict[str, Any]] = []
+        chain_reports: List[Dict[str, Any]] = []
+        while remaining:
+            start_index = min(remaining)
+            start_component = components[start_index]
+            start_node = int(start_component["start_node"])
+            current_node = start_node
+            current_index = start_index
+            chain_indices: List[int] = []
+            chain_points: List[List[float]] = []
+            closed = False
+
+            while current_index in remaining:
+                component = components[current_index]
+                oriented_points, next_node = self._oriented_component_points(component, current_node)
+                if not chain_points:
+                    chain_points.extend(oriented_points)
+                else:
+                    chain_points.extend(oriented_points[1:])
+                chain_indices.append(current_index)
+                remaining.remove(current_index)
+                if next_node == start_node:
+                    closed = True
+                    break
+
+                next_candidates = [idx for idx in node_refs.get(next_node, []) if idx in remaining]
+                if not next_candidates:
+                    break
+                current_node = next_node
+                current_index = min(next_candidates)
+
+            if closed and len(chain_points) >= 2 and self._point_distance(chain_points[0], chain_points[-1]) <= 1e-7:
+                chain_points = chain_points[:-1]
+
+            simplified_points, report = self._merge_ordered_triplet_points(chain_points, closed=closed)
+            source_components = [components[index] for index in chain_indices]
+            merged_component = self._line_chain_component(
+                component_id=len(merged_components) + 1,
+                source_components=source_components,
+                points=simplified_points,
+                closed=closed,
+                start_node=start_node,
+                end_node=start_node if closed else int(source_components[-1]["end_node"]),
+                chain_report=report,
+            )
+            merged_components.append(merged_component)
+            chain_reports.append(
+                {
+                    "component_id": merged_component["component_id"],
+                    "source_component_ids": [int(component["component_id"]) for component in source_components],
+                    "closed": closed,
+                    **report,
+                }
+            )
+
+        total_merged = sum(int(report.get("merged_count", 0) or 0) for report in chain_reports)
+        if total_merged <= 0:
+            return list(components), {
+                "enabled": True,
+                "applied": False,
+                "reason": "no_cross_component_triplets_matched",
+                "merged_count": 0,
+                "chains": chain_reports,
+            }
+        return merged_components, {
+            "enabled": True,
+            "applied": True,
+            "merged_count": int(total_merged),
+            "chain_count": len(merged_components),
+            "chains": chain_reports,
+        }
+
+    def _oriented_component_points(self, component: Dict[str, Any], from_node: int) -> Tuple[List[List[float]], int]:
+        points = [list(point) for point in (component.get("resampled_points") or component.get("fallback_points") or [])]
+        if int(component["start_node"]) == int(from_node):
+            return points, int(component["end_node"])
+        if int(component["end_node"]) == int(from_node):
+            return list(reversed(points)), int(component["start_node"])
+        raise ValueError(f"component {component.get('component_id')} is not connected to node {from_node}")
+
+    @staticmethod
+    def _point_distance(a: Sequence[float], b: Sequence[float]) -> float:
+        return math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1]))
+
+    def _merge_ordered_triplet_points(self, points: Sequence[Sequence[float]], closed: bool) -> Tuple[List[List[float]], Dict[str, Any]]:
+        ordered = [list(point) for point in points]
+        min_points = 3 if closed else 2
+        removed: List[Dict[str, Any]] = []
+        cursor = 0
+        while len(ordered) > min_points:
+            limit = len(ordered) if closed else len(ordered) - 2
+            if limit <= 0:
+                break
+            if cursor >= limit:
+                cursor = 0
+                if not removed or not removed[-1].get("_changed_in_pass", False):
+                    break
+                for item in removed:
+                    item.pop("_changed_in_pass", None)
+                continue
+
+            a_pos = cursor % len(ordered)
+            b_pos = (cursor + 1) % len(ordered)
+            c_pos = (cursor + 2) % len(ordered)
+            should_merge, reason = self._should_merge_triplet(ordered[a_pos], ordered[b_pos], ordered[c_pos])
+            if should_merge:
+                removed.append(
+                    {
+                        "previous_position": int(a_pos),
+                        "removed_position": int(b_pos),
+                        "next_position": int(c_pos),
+                        "removed_point": ordered[b_pos],
+                        "reason": reason,
+                        "_changed_in_pass": True,
+                    }
+                )
+                ordered.pop(b_pos)
+                cursor = max(0, cursor - 1)
+                continue
+            cursor += 1
+
+        for item in removed:
+            item.pop("_changed_in_pass", None)
+        return ordered, {
+            "enabled": True,
+            "merged_count": len(removed),
+            "distance_threshold_px": self.line_triplet_merge_distance_px,
+            "max_angle_deg": self.line_triplet_merge_max_angle_deg,
+            "removed_points": removed,
+        }
+
+    def _line_chain_component(
+        self,
+        component_id: int,
+        source_components: Sequence[Dict[str, Any]],
+        points: Sequence[Sequence[float]],
+        closed: bool,
+        start_node: int,
+        end_node: int,
+        chain_report: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        primitives = self._line_primitives_from_ordered_points(
+            points,
+            closed=closed,
+            source_edge_id=int(source_components[0].get("source_edge_id", 0) or 0),
+        )
+        component = {
+            "component_id": int(component_id),
+            "source_edge_id": int(source_components[0].get("source_edge_id", 0) or 0),
+            "source_edge_ids": [int(item.get("source_edge_id", 0) or 0) for item in source_components],
+            "source_component_ids": [int(item.get("component_id", 0) or 0) for item in source_components],
+            "source_component_index": int(source_components[0].get("source_component_index", 0) or 0),
+            "closed": bool(closed),
+            "start_node": int(start_node),
+            "end_node": int(end_node),
+            "bbox": self._bbox(points),
+            "sampled_point_count": int(len(points)),
+            "fallback_points": [list(point) for point in points],
+            "resampled_points": [list(point) for point in points],
+            "primitives": primitives,
+            "segments": primitives,
+            "metrics": self._component_metrics(points, primitives),
+            "global_line_triplet_merge": chain_report,
+        }
+        return component
+
+    def _line_primitives_from_ordered_points(
+        self,
+        points: Sequence[Sequence[float]],
+        closed: bool,
+        source_edge_id: int,
+    ) -> List[Dict[str, Any]]:
+        import numpy as np
+
+        pts = self._clean_points(points)
+        if len(pts) < 2:
+            return []
+        pairs = [(idx, idx + 1) for idx in range(len(pts) - 1)]
+        if closed and len(pts) >= 3:
+            pairs.append((len(pts) - 1, 0))
+
+        primitives: List[Dict[str, Any]] = []
+        for segment_id, (start_idx, end_idx) in enumerate(pairs, start=1):
+            start = pts[start_idx]
+            end = pts[end_idx]
+            direction = end - start
+            norm = float(np.linalg.norm(direction))
+            if norm > 1e-12:
+                direction = direction / norm
+            primitive = {
+                "type": "line",
+                "kind": "line",
+                "primitive_type": "line",
+                "fit_method": "global_sliding_triplet_line_chain",
+                "line_only_parameterization": True,
+                "start": start.tolist(),
+                "end": end.tolist(),
+                "points": [start.tolist(), end.tolist()],
+                "direction": direction.tolist(),
+                "max_error": 0.0,
+                "mean_error": 0.0,
+                "effective_params": 4,
+                "parameter_count": 4,
+                "source_point_count": 2,
+                "source_edge_id": int(source_edge_id),
+                "segment_id": int(segment_id),
+                "visual_label": f"G{segment_id:03d} LINE",
+            }
+            primitive["parameters"] = self._primitive_parameters(primitive)
+            primitive["fallback_points"] = primitive["points"]
+            primitives.append(primitive)
+        return primitives
 
     def _fit_line_primitive_pca(self, points: Any) -> Dict[str, Any]:
         import numpy as np

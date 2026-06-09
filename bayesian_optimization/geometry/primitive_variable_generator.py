@@ -2,9 +2,9 @@ from __future__ import annotations
 
 """Primitive-aware BO variable generation.
 
-The generator emits one physical variable for each parameterized line: a
-normal-direction line offset. It intentionally avoids independent point dx/dy
-variables and derived feature variables such as slot widths or line lengths.
+The generator emits one normal-offset variable for each non-port parameterized
+line, plus explicit port variables for width expansion and small propagation
+direction alignment. It intentionally avoids independent point dx/dy variables.
 """
 
 import math
@@ -66,6 +66,16 @@ def generate_primitive_variables(
         if reached_dimension_limit(variables, max_dimensions):
             return variables[:max_dimensions]
 
+    ports = [
+        primitive
+        for primitive in primitives
+        if primitive.get("type") == "LINE" and primitive.get("role") == "PORT"
+    ]
+    for primitive in ports:
+        variables.extend(generate_port_variables(primitive, scale))
+        if reached_dimension_limit(variables, max_dimensions):
+            return variables[:max_dimensions]
+
     if max_dimensions is not None:
         return variables[:max_dimensions]
     return variables
@@ -109,6 +119,43 @@ def generate_line_normal_offset_variable(primitive: Dict[str, Any], scale: float
     )
 
 
+def generate_port_variables(primitive: Dict[str, Any], scale: float) -> List[PrimitiveDesignVariable]:
+    """Generate explicit port geometry variables.
+
+    Input: one PORT line primitive and global design scale.
+    Output: width expansion and propagation-direction shift variables.
+    Algorithm purpose: let BO increase port/feed contact area without allowing
+    the port width to shrink below the detected baseline.
+    """
+
+    primitive_id = str(primitive.get("primitive_id"))
+    prefix = safe_name(primitive)
+    width = max(1.0, line_width(primitive))
+    shift_limit = max(2.0, min(0.05 * width, 0.005 * scale))
+    return [
+        PrimitiveDesignVariable(
+            name=f"{prefix}_port_width_delta",
+            lower=0.0,
+            upper=0.20 * width,
+            default=0.0,
+            description="Port width increase only; upper bound is +20% of the detected port width.",
+            primitive_id=primitive_id,
+            variable_type="port_width_delta",
+            target_role="PORT",
+        ),
+        PrimitiveDesignVariable(
+            name=f"{prefix}_port_propagation_shift",
+            lower=-shift_limit,
+            upper=shift_limit,
+            default=0.0,
+            description="Small port shift along the inferred propagation direction, equivalent to the port-line normal.",
+            primitive_id=primitive_id,
+            variable_type="port_propagation_shift",
+            target_role="PORT",
+        ),
+    ]
+
+
 def range_fraction(base_fraction: float, primitive: Dict[str, Any]) -> float:
     """Scale BO bounds for non-feed, non-port primitive groups.
 
@@ -135,6 +182,17 @@ def estimate_design_scale(analysis: Dict[str, Any]) -> float:
     width = abs(float(bbox[2]) - float(bbox[0])) if len(bbox) >= 4 else 100.0
     height = abs(float(bbox[3]) - float(bbox[1])) if len(bbox) >= 4 else 100.0
     return max(10.0, math.hypot(width, height))
+
+
+def line_width(primitive: Dict[str, Any]) -> float:
+    """Return a line primitive length from analysis points."""
+
+    points = primitive.get("points") or []
+    if len(points) < 2:
+        return 1.0
+    start = points[0]
+    end = points[-1]
+    return math.hypot(float(end[0]) - float(start[0]), float(end[1]) - float(start[1]))
 
 
 def safe_name(primitive: Dict[str, Any]) -> str:

@@ -36,6 +36,8 @@ class ParameterizationOnlyRunner:
         layer_name: str = "layer0",
         run_name: Optional[str] = None,
         parameterization_mode: str = "graph_local_primitives",
+        line_triplet_merge_distance_px: float = 3.0,
+        line_triplet_merge_max_angle_deg: float = 35.0,
         skip_fss_cleanup: bool = False,
         honor_instance_skip: bool = True,
     ):
@@ -43,6 +45,8 @@ class ParameterizationOnlyRunner:
         self.output_root = Path(output_root)
         self.layer_name = str(layer_name)
         self.parameterization_mode = str(parameterization_mode).lower().strip()
+        self.line_triplet_merge_distance_px = float(line_triplet_merge_distance_px)
+        self.line_triplet_merge_max_angle_deg = float(line_triplet_merge_max_angle_deg)
         if self.parameterization_mode not in ("standard", "geometry_primitives", "graph_local_primitives", "graph_local_lines"):
             raise ValueError(
                 "parameterization_mode must be one of: standard, geometry_primitives, graph_local_primitives, graph_local_lines"
@@ -294,6 +298,8 @@ class ParameterizationOnlyRunner:
             graph_curvature_split_percentile=92.0,
             max_local_spline_rms_error_px=2.0,
             max_local_spline_length_shrink_ratio=0.04,
+            line_triplet_merge_distance_px=self.line_triplet_merge_distance_px,
+            line_triplet_merge_max_angle_deg=self.line_triplet_merge_max_angle_deg,
         )
         json_path = parameterizer.run()
         status = getattr(parameterizer, "last_status", {})
@@ -431,6 +437,18 @@ def parse_args() -> argparse.Namespace:
         help="Parameterization backend to test.",
     )
     parser.add_argument(
+        "--line-triplet-merge-distance-px",
+        type=float,
+        default=3.0,
+        help="graph_local_lines only: merge the middle point of close same-trend triplets within this pixel distance.",
+    )
+    parser.add_argument(
+        "--line-triplet-merge-max-angle-deg",
+        type=float,
+        default=35.0,
+        help="graph_local_lines only: maximum local angle change allowed when simplifying close triplets.",
+    )
+    parser.add_argument(
         "--skip-fss-cleanup",
         action="store_true",
         help="Explicitly use layer img_path directly instead of running FSS repair.",
@@ -458,6 +476,8 @@ def main() -> None:
         layer_name=args.layer,
         run_name=args.run_name,
         parameterization_mode=args.parameterization_mode,
+        line_triplet_merge_distance_px=args.line_triplet_merge_distance_px,
+        line_triplet_merge_max_angle_deg=args.line_triplet_merge_max_angle_deg,
         skip_fss_cleanup=args.skip_fss_cleanup,
         honor_instance_skip=args.honor_instance_skip,
     )

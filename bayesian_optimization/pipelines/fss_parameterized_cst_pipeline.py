@@ -94,6 +94,8 @@ EDITOR_RUN_CONFIG: Dict[str, Any] = {
     # "graph_local_lines": graph-local 拓扑流程，但最终只输出 line primitives。
     #"PARAMETERIZATION_MODE": "standard",
     "PARAMETERIZATION_MODE": "graph_local_lines",
+    "LINE_TRIPLET_MERGE_DISTANCE_PX": 3.0,
+    "LINE_TRIPLET_MERGE_MAX_ANGLE_DEG": 35.0,
     "REUSE_PROJECT_FOLDER": False,
     "REUSE_PROJECT_NAME": False,
 }
@@ -124,6 +126,8 @@ class FSSParameterizedCSTPipeline:
         simplify_tolerance_px: float = 1.0,
         geometry_frame: str = "svg",
         parameterization_mode: str = "standard",
+        line_triplet_merge_distance_px: float = 3.0,
+        line_triplet_merge_max_angle_deg: float = 35.0,
         skip_fss_cleanup: bool = False,
         honor_instance_skip: bool = True,
         reuse_project_folder: bool = False,
@@ -143,6 +147,8 @@ class FSSParameterizedCSTPipeline:
         self.skip_fss_cleanup = bool(skip_fss_cleanup)
         self.honor_instance_skip = bool(honor_instance_skip)
         self.parameterization_mode = str(parameterization_mode).lower().strip()
+        self.line_triplet_merge_distance_px = float(line_triplet_merge_distance_px)
+        self.line_triplet_merge_max_angle_deg = float(line_triplet_merge_max_angle_deg)
         if self.parameterization_mode not in ("standard", "optimized_bs_seed", "geometry_primitives", "graph_local_primitives", "graph_local_lines"):
             raise ValueError(
                 "parameterization_mode must be one of: 'standard', 'optimized_bs_seed', "
@@ -483,6 +489,8 @@ class FSSParameterizedCSTPipeline:
             graph_curvature_split_percentile=92.0,
             max_local_spline_rms_error_px=2.0,
             max_local_spline_length_shrink_ratio=0.04,
+            line_triplet_merge_distance_px=self.line_triplet_merge_distance_px,
+            line_triplet_merge_max_angle_deg=self.line_triplet_merge_max_angle_deg,
         )
         json_path = parameterizer.run()
         status = getattr(parameterizer, "last_status", {})
@@ -1204,6 +1212,18 @@ def parse_args() -> argparse.Namespace:
         help="Choose standard NewParams, optimized_bs seed, geometry-driven, graph-local primitive, or graph-local line-only flow.",
     )
     parser.add_argument(
+        "--line-triplet-merge-distance-px",
+        type=float,
+        default=3.0,
+        help="graph_local_lines only: merge the middle point of close same-trend triplets within this pixel distance.",
+    )
+    parser.add_argument(
+        "--line-triplet-merge-max-angle-deg",
+        type=float,
+        default=35.0,
+        help="graph_local_lines only: maximum local angle change allowed when simplifying close triplets.",
+    )
+    parser.add_argument(
         "--skip-fss-cleanup",
         action="store_true",
         help="Use layer img_path directly; do not run FSSfigDetector repair.",
@@ -1254,6 +1274,8 @@ def main() -> None:
         simplify_tolerance_px=args.simplify_tolerance_px,
         geometry_frame=args.geometry_frame,
         parameterization_mode=args.parameterization_mode,
+        line_triplet_merge_distance_px=args.line_triplet_merge_distance_px,
+        line_triplet_merge_max_angle_deg=args.line_triplet_merge_max_angle_deg,
         skip_fss_cleanup=args.skip_fss_cleanup,
         honor_instance_skip=args.honor_instance_skip,
         reuse_project_folder=args.reuse_project_folder,
@@ -1282,6 +1304,8 @@ def run_from_editor_config() -> None:
         simplify_tolerance_px=EDITOR_RUN_CONFIG["SIMPLIFY_TOLERANCE_PX"],
         geometry_frame=EDITOR_RUN_CONFIG["GEOMETRY_FRAME"],
         parameterization_mode=EDITOR_RUN_CONFIG["PARAMETERIZATION_MODE"],
+        line_triplet_merge_distance_px=EDITOR_RUN_CONFIG.get("LINE_TRIPLET_MERGE_DISTANCE_PX", 3.0),
+        line_triplet_merge_max_angle_deg=EDITOR_RUN_CONFIG.get("LINE_TRIPLET_MERGE_MAX_ANGLE_DEG", 35.0),
         skip_fss_cleanup=EDITOR_RUN_CONFIG.get("SKIP_FSS_CLEANUP", False),
         honor_instance_skip=EDITOR_RUN_CONFIG.get("HONOR_INSTANCE_SKIP", False),
         reuse_project_folder=EDITOR_RUN_CONFIG["REUSE_PROJECT_FOLDER"],

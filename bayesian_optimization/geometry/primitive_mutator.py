@@ -144,7 +144,10 @@ def extract_design_variables(
                 "analysis": primitive_analysis,
                 "variables": [variable.to_dict() for variable in primitive_variables],
                 "all_parameterized_lines_optimized": True,
-                "line_normal_offsets_only": True,
+                "line_normal_offsets_only": False,
+                "non_port_line_normal_offsets_enabled": True,
+                "port_width_expansion_enabled": True,
+                "port_propagation_shift_enabled": True,
                 "raw_sampled_points_optimized": False,
                 "single_control_point_offsets_enabled": False,
                 "curve_parameterization_mode": primitive_summary.get("curve_parameterization_mode", curve_parameterization_mode),
@@ -339,6 +342,7 @@ def apply_primitive_aware_mutation(
         "iteration": int(iteration),
         "variables_used": [],
         "line_mutations": [],
+        "port_mutations": [],
         "spline_mutations": [],
         "curve_mutations": [],
         "junction_fixed": [],
@@ -368,6 +372,8 @@ def apply_primitive_aware_mutation(
             continue
         if variable_type in {"line_normal_offset", "line_length_delta", "feed_length"}:
             apply_line_mutation(mutated, primitive, variable_type, sampled_value, analysis, mutation_report)
+        elif variable_type in {"port_width_delta", "port_propagation_shift"}:
+            apply_port_mutation(mutated, primitive, variable_type, sampled_value, analysis, mutation_report)
         elif variable_type in {"spline_bulge", "spline_smooth_offset"}:
             apply_spline_mutation(mutated, primitive, sampled_value, mutation_report)
         elif variable_type in {"curve_smooth_offset", "primitive_smooth_offset"}:
@@ -376,6 +382,7 @@ def apply_primitive_aware_mutation(
     update_component_bboxes(mutated)
     graph = build_junction_graph(original, analysis, tolerance=1.0)
     sync_report = synchronize_junctions(mutated, graph, analysis)
+    sync_line_counterparts(mutated, analysis)
     junction_report = validate_junctions(mutated, graph, analysis, tolerance=1.0)
     mutation_report["junction_fixed"] = sync_report.get("junction_fixed", [])
     mutation_report["junction_validation"] = junction_report
@@ -455,8 +462,7 @@ def apply_line_mutation(
 
     new_start = (start[0] + displacement_start[0], start[1] + displacement_start[1])
     new_end = (end[0] + displacement_end[0], end[1] + displacement_end[1])
-    primitive_obj["start"] = [new_start[0], new_start[1]]
-    primitive_obj["end"] = [new_end[0], new_end[1]]
+    set_line_primitive_endpoints(payload, primitive, new_start, new_end)
     apply_range_linear_endpoint_motion(payload, primitive, start, end, new_start, new_end, analysis)
     report["line_mutations"].append(
         {
@@ -465,6 +471,76 @@ def apply_line_mutation(
             "value": value,
             "start": list(new_start),
             "end": list(new_end),
+        }
+    )
+
+
+def apply_port_mutation(
+    payload: Dict[str, Any],
+    primitive: Dict[str, Any],
+    variable_type: str,
+    value: float,
+    analysis: Dict[str, Any],
+    report: Dict[str, Any],
+) -> None:
+    """Apply explicit port width/alignment mutations.
+
+    Input: mutable payload, PORT primitive record, variable type/value, full
+    analysis, and mutation report.
+    Output: in-place port line update and appended report entry.
+    Algorithm purpose: increase port width or shift the port along propagation
+    direction while keeping the port represented as a straight line.
+    """
+
+    primitive_obj = primitive_object(payload, primitive)
+    if primitive_obj is None:
+        return
+    start = parse_point(primitive_obj.get("start")) or primitive_endpoint_from_samples(payload, primitive, "start")
+    end = parse_point(primitive_obj.get("end")) or primitive_endpoint_from_samples(payload, primitive, "end")
+    if start is None or end is None:
+        return
+
+    direction = unit((end[0] - start[0], end[1] - start[1]))
+    if math.hypot(direction[0], direction[1]) <= 1e-12:
+        return
+
+    port_context = analysis.get("summary", {}).get("port_context", {}) or {}
+    fallback_normal = (-direction[1], direction[0])
+    propagation = unit(tuple(float(v) for v in port_context.get("propagation_direction", fallback_normal)))
+    if math.hypot(propagation[0], propagation[1]) <= 1e-12:
+        propagation = fallback_normal
+
+    if variable_type == "port_width_delta":
+        delta = max(0.0, float(value))
+        new_start = (start[0] - 0.5 * direction[0] * delta, start[1] - 0.5 * direction[1] * delta)
+        new_end = (end[0] + 0.5 * direction[0] * delta, end[1] + 0.5 * direction[1] * delta)
+    elif variable_type == "port_propagation_shift":
+        shift = float(value)
+        offset = (propagation[0] * shift, propagation[1] * shift)
+        new_start = (start[0] + offset[0], start[1] + offset[1])
+        new_end = (end[0] + offset[0], end[1] + offset[1])
+    else:
+        return
+
+    set_line_primitive_endpoints(payload, primitive, new_start, new_end)
+    apply_range_linear_endpoint_motion(
+        payload,
+        primitive,
+        start,
+        end,
+        new_start,
+        new_end,
+        analysis,
+        freeze_port_core=False,
+    )
+    report["port_mutations"].append(
+        {
+            "primitive_id": primitive.get("primitive_id"),
+            "variable_type": variable_type,
+            "value": value,
+            "start": list(new_start),
+            "end": list(new_end),
+            "propagation_direction": list(propagation),
         }
     )
 
@@ -501,8 +577,12 @@ def apply_parallel_line_spacing(
         direction = unit((end[0] - start[0], end[1] - start[1]))
         normal = (-direction[1], direction[0])
         delta = (normal[0] * value * sign, normal[1] * value * sign)
-        primitive_obj["start"] = [start[0] + delta[0], start[1] + delta[1]]
-        primitive_obj["end"] = [end[0] + delta[0], end[1] + delta[1]]
+        set_line_primitive_endpoints(
+            payload,
+            primitive,
+            (start[0] + delta[0], start[1] + delta[1]),
+            (end[0] + delta[0], end[1] + delta[1]),
+        )
         apply_range_translation(payload, primitive, delta)
     report["line_mutations"].append({"primitive_id": list(primitive_ids[:2]), "variable_type": "parallel_line_spacing", "value": value})
 
@@ -579,6 +659,7 @@ def apply_range_linear_endpoint_motion(
     new_start: Point,
     new_end: Point,
     analysis: Dict[str, Any],
+    freeze_port_core: bool = True,
 ) -> None:
     """Interpolate endpoint motion across a primitive's sampled span.
 
@@ -611,12 +692,78 @@ def apply_range_linear_endpoint_motion(
                 continue
             # Port constraint: points inside PORT_CORE are completely frozen;
             # feed-neighbor motion is generated only along propagation upstream.
-            if len(core_bbox) == 4 and point_in_bbox(point, core_bbox):
+            if freeze_port_core and len(core_bbox) == 4 and point_in_bbox(point, core_bbox):
                 continue
             t = (index - lo) / span
             dx = (new_start[0] - old_start[0]) * (1.0 - t) + (new_end[0] - old_end[0]) * t
             dy = (new_start[1] - old_start[1]) * (1.0 - t) + (new_end[1] - old_end[1]) * t
             values[index] = [point[0] + dx, point[1] + dy]
+
+
+def set_line_primitive_endpoints(
+    payload: Dict[str, Any],
+    primitive: Dict[str, Any],
+    start: Point,
+    end: Point,
+) -> None:
+    """Set line endpoints in both `segments` and `primitives` when present.
+
+    Input: payload, analysis primitive record, and replacement endpoints.
+    Output: in-place schema-native line endpoint updates.
+    Algorithm purpose: keep BO mutation visible to both diagnostic segment
+    records and CST builder compact primitive reconstruction.
+    """
+
+    component = component_object(payload, primitive)
+    if component is None:
+        return
+    index = primitive.get("primitive_index")
+    if not isinstance(index, int):
+        return
+    source_key = str(primitive.get("source_key", "segments"))
+    keys = [source_key]
+    for key in ("segments", "primitives"):
+        if key not in keys:
+            keys.append(key)
+
+    for key in keys:
+        items = component.get(key)
+        if not isinstance(items, list) or not (0 <= index < len(items)):
+            continue
+        item = items[index]
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("type") or item.get("kind") or item.get("primitive_type") or "").lower()
+        if "line" not in kind and key != source_key:
+            continue
+        item["start"] = [float(start[0]), float(start[1])]
+        item["end"] = [float(end[0]), float(end[1])]
+        points = item.get("points")
+        if isinstance(points, list) and len(points) >= 2:
+            points[0] = [float(start[0]), float(start[1])]
+            points[-1] = [float(end[0]), float(end[1])]
+
+
+def sync_line_counterparts(payload: Dict[str, Any], analysis: Dict[str, Any]) -> None:
+    """Copy mutated line endpoints from the analyzed source to its counterpart.
+
+    Input: mutable payload and primitive analysis.
+    Output: in-place synchronization between `segments` and `primitives`.
+    Algorithm purpose: keep CST compact primitive reconstruction consistent
+    after junction synchronization, which updates the analyzed source entries.
+    """
+
+    for primitive in analysis.get("primitives", []) or []:
+        if primitive.get("type") != "LINE":
+            continue
+        source = primitive_object(payload, primitive)
+        if source is None:
+            continue
+        start = parse_point(source.get("start"))
+        end = parse_point(source.get("end"))
+        if start is None or end is None:
+            continue
+        set_line_primitive_endpoints(payload, primitive, start, end)
 
 
 def apply_range_translation(payload: Dict[str, Any], primitive: Dict[str, Any], delta: Point) -> None:
@@ -756,16 +903,21 @@ def build_port_constraint_report(analysis: Dict[str, Any], variable_values: Dict
     primitives = analysis.get("primitives", []) or []
     return {
         "zones": {
-            "PORT_CORE": "frozen",
+            "PORT_CORE": "explicit port width expansion and propagation shift allowed; raw point drift remains disabled",
             "PORT_NEIGHBOR": "feed_propagation_direction_only",
             "NORMAL_REGION": "primitive_mode_specific",
         },
         "port_primitives": [primitive.get("primitive_id") for primitive in primitives if primitive.get("role") == "PORT"],
         "feed_primitives": [primitive.get("primitive_id") for primitive in primitives if primitive.get("role") == "FEEDLINE"],
+        "allowed_port_variables": [
+            name
+            for name in variable_values
+            if "port_width_delta" in name.lower() or "port_propagation_shift" in name.lower()
+        ],
         "blocked_variables": [
             name
             for name in variable_values
-            if "port_width" in name.lower() or "port_contact" in name.lower() or "port_alignment" in name.lower()
+            if "port_contact" in name.lower() or "port_alignment" in name.lower()
         ],
         "port_context": analysis.get("summary", {}).get("port_context", {}),
     }

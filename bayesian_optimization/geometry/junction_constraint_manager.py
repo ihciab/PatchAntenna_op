@@ -93,14 +93,17 @@ def synchronize_junctions(
     for junction_id, junction in (graph.get("junctions") or {}).items():
         endpoints = junction.get("endpoints", []) or []
         current_points: List[Point] = []
+        port_points: List[Point] = []
         for endpoint in endpoints:
             primitive = primitive_by_id.get(endpoint.get("primitive_id"))
             point = primitive_endpoint_from_payload(payload, primitive, endpoint.get("endpoint")) if primitive else None
             if point is not None:
                 current_points.append(point)
+                if primitive and primitive.get("role") == "PORT":
+                    port_points.append(point)
         if not current_points:
             continue
-        target = average_points(current_points)
+        target = average_points(port_points or current_points)
         # Junction synchronization core: all connected primitive endpoint fields
         # and dependent sampled-cache endpoints are snapped to one shared point.
         for endpoint in endpoints:

@@ -330,11 +330,21 @@ repair_fig.png
 - 禁止 arc / spline primitive 输出；曲线区域会按采样折线拆成多段 `line` primitive。
 - 输出 `backend=graph_local_lines`，`metadata.line_only_parameterization=true`。
 - component 的 `fallback_points` / `resampled_points` 保存折线采样顶点，避免把整段曲线压成首尾一根弦。
+- 在折线顶点生成后，会按滑动三点组检查局部冗余点：如果三个点彼此很近，并且两段局部斜率没有正负突变，就删除中间点，直接连接首尾点。
+- 对 `长线段 -> 微小偏移点 -> 长线段` 这类肉眼可见的冗余 start point，会额外检查中间点到首尾直连弦的误差；误差足够小且方向没有突变时，同样删除中间点。
+- 对 degree=2 的连续图边，会按全局点顺序串成闭合链后再做一轮 `123 / 234 / 345` 滑动三点合并，因此跨 edge 边界的 start point 也会被检查。
+- 三点合并会同步更新该 component 的 `fallback_points` / `resampled_points` 顺序，并重新生成后续 `line` segments；默认阈值为 `LINE_TRIPLET_MERGE_DISTANCE_PX=3.0`、`LINE_TRIPLET_MERGE_MAX_ANGLE_DEG=35.0`。
 
 使用命令:
 
 ```powershell
 D:\Anaconda\envs\linefor\python.exe .\fss_parameterized_cst_pipeline.py --parameterization-mode graph_local_lines
+```
+
+可选调参:
+
+```powershell
+D:\Anaconda\envs\linefor\python.exe .\fss_parameterized_cst_pipeline.py --parameterization-mode graph_local_lines --line-triplet-merge-distance-px 3.0 --line-triplet-merge-max-angle-deg 35.0
 ```
 
 失败策略:
