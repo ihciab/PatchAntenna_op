@@ -1,5 +1,45 @@
 # BO Change Log
 
+## 2026-06-08 11:28:06 +08:00
+
+### Modified Files
+
+- `bayesian_optimization/pipelines/optimization_pipeline.py`
+- `bayesian_optimization/simulation/parameterized_json_to_cst.py`
+- `docs/bo_change_log.md`
+
+### Reason
+
+The BO pipeline needs the CST S-parameter simulation range to come from the
+new-format instance JSON, specifically `Antenna_package.f0` and
+`Antenna_package.f1`, instead of relying on stale prepared-instance files or
+hard-coded defaults.
+
+### Algorithm Changes
+
+- Added `INSTANCE_JSON_PATH` to the editor-run BO configuration and pointed it
+  to `pipeline_test_instance.json`.
+- Updated editor config conversion so `INSTANCE_JSON_PATH` is used when present.
+- Added explicit CST S11 frequency-range validation before each CST build.
+- Added `cst_s11_frequency_range` to BO run metadata.
+- Added builder-level frequency validation before `cst_auto_init(...)`.
+
+### Compatibility
+
+- CLI behavior is unchanged; `--instance-json` still controls CST settings.
+- Existing prepared-instance workflows still work when `INSTANCE_JSON_PATH` is
+  omitted.
+- `load_instance_config(...)` continues to support both `Antenna_package` and
+  legacy `FSS_package`.
+
+### Risk Analysis
+
+- Runs with invalid frequency ranges now fail early with a clear error instead
+  of producing an ambiguous CST setup.
+- Direct editor runs now prefer root `pipeline_test_instance.json`; users who
+  want per-run prepared instances should change `INSTANCE_JSON_PATH` or remove
+  it from `EDITOR_RUN_CONFIG`.
+
 ## 2026-06-02 21:06:15 +08:00
 
 ### Modified Files

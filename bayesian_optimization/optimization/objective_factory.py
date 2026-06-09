@@ -15,8 +15,10 @@ OBJECTIVE_EPSILON = 1e-9
 class ObjectiveTargets:
     """Paper-level target metrics used by a reconstruction objective."""
 
-    resonance_ghz: float
+    resonance_ghz: Optional[float]
     bandwidth_ghz: Optional[float]
+    bandwidth_start_ghz: Optional[float]
+    bandwidth_end_ghz: Optional[float]
     gain_dbi: Optional[float]
     s11_db: float
     antenna_type: Dict[str, Any] = field(default_factory=dict)
@@ -61,16 +63,29 @@ class WidebandPatchObjective:
         actual_gain = _extract_actual_gain(geometry_metrics)
 
         # Normalized relative error: abs(actual - target) / max(abs(target), epsilon).
-        e_res = normalized_relative_error(
-            s11_metrics.resonant_frequency_ghz,
-            self.targets.resonance_ghz,
+        # A target resonance of 0.0 means the paper parser did not extract a
+        # usable resonance, so the resonance loss should not steer BO.
+        e_res = (
+            normalized_relative_error(
+                s11_metrics.resonant_frequency_ghz,
+                self.targets.resonance_ghz,
+            )
+            if self.targets.resonance_ghz is not None
+            else None
         )
-        e_bw = normalized_relative_error_optional(
-            s11_metrics.bandwidth_ghz,
-            self.targets.bandwidth_ghz,
+        e_bw = bandwidth_edge_error_optional(
+            simulated_start=s11_metrics.bandwidth_start_ghz,
+            simulated_end=s11_metrics.bandwidth_end_ghz,
+            target_start=self.targets.bandwidth_start_ghz,
+            target_end=self.targets.bandwidth_end_ghz,
         )
+        if e_bw is None:
+            e_bw = normalized_relative_error_optional(
+                s11_metrics.bandwidth_ghz,
+                self.targets.bandwidth_ghz,
+            )
         e_gain = normalized_relative_error_optional(actual_gain, self.targets.gain_dbi)
-        e_s11 = normalized_relative_error(
+        e_s11 = normalized_s11_threshold_error(
             s11_metrics.s11_at_target_db,
             self.targets.s11_db,
         )
@@ -78,11 +93,12 @@ class WidebandPatchObjective:
         normalized_errors = {
             "resonance": e_res,
             "bandwidth": e_bw,
+            "bandwidth_edges": e_bw,
             "gain": e_gain,
             "s11": e_s11,
         }
         weighted_terms = {
-            "resonance": float(getattr(weights, "resonance", 0.0)) * e_res,
+            "resonance": float(getattr(weights, "resonance", 0.0)) * (e_res or 0.0),
             "bandwidth": float(getattr(weights, "bandwidth_reward", 0.0)) * (e_bw or 0.0),
             "s11": float(getattr(weights, "target_s11", 0.0)) * e_s11,
             "gain": float(getattr(weights, "gain", 0.0)) * (e_gain or 0.0),
@@ -98,6 +114,8 @@ class WidebandPatchObjective:
             actuals={
                 "resonance_ghz": float(s11_metrics.resonant_frequency_ghz),
                 "bandwidth_ghz": float(s11_metrics.bandwidth_ghz),
+                "bandwidth_start_ghz": s11_metrics.bandwidth_start_ghz,
+                "bandwidth_end_ghz": s11_metrics.bandwidth_end_ghz,
                 "gain_dbi": actual_gain,
                 "s11_at_target_db": float(s11_metrics.s11_at_target_db),
                 "minimum_s11_db": float(s11_metrics.minimum_s11_db),
@@ -160,6 +178,8 @@ def create_objective_profile_from_instance(
         targets = ObjectiveTargets(
             resonance_ghz=targets.resonance_ghz,
             bandwidth_ghz=targets.bandwidth_ghz,
+            bandwidth_start_ghz=targets.bandwidth_start_ghz,
+            bandwidth_end_ghz=targets.bandwidth_end_ghz,
             gain_dbi=targets.gain_dbi,
             s11_db=targets.s11_db,
             antenna_type=targets.antenna_type,
@@ -183,19 +203,23 @@ def extract_objective_targets(
     if not isinstance(antenna_type, dict):
         antenna_type = {}
 
-    resonance = _first_number(paper.get("Target_Resonances_GHz"))
+    resonance = _first_positive_number(paper.get("Target_Resonances_GHz"))
     if resonance is None:
-        resonance = _number_or_none(paper.get("Target_Resonance_GHz"))
-    if resonance is None:
+        legacy_resonance = _number_or_none(paper.get("Target_Resonance_GHz"))
+        if legacy_resonance is not None and legacy_resonance > 0.0:
+            resonance = legacy_resonance
+    if resonance is None and "Target_Resonances_GHz" not in paper and "Target_Resonance_GHz" not in paper:
         resonance = float(fallback_target_frequency_ghz)
 
-    bandwidth = _extract_bandwidth_target(paper)
+    bandwidth, bandwidth_start, bandwidth_end = _extract_bandwidth_target(paper)
     gain = _number_or_none(paper.get("Peak_Gain_dBi"))
     s11_target = _extract_s11_target(paper, fallback_target_s11_db)
 
     return ObjectiveTargets(
-        resonance_ghz=float(resonance),
+        resonance_ghz=float(resonance) if resonance is not None else None,
         bandwidth_ghz=bandwidth,
+        bandwidth_start_ghz=bandwidth_start,
+        bandwidth_end_ghz=bandwidth_end,
         gain_dbi=gain,
         s11_db=float(s11_target),
         antenna_type=dict(antenna_type),
@@ -229,6 +253,23 @@ def normalized_relative_error(actual: float, target: float, epsilon: float = OBJ
     return abs(float(actual) - float(target)) / denominator
 
 
+def normalized_s11_threshold_error(actual_s11_db: float, target_s11_db: float) -> float:
+    """Compute S11 threshold loss.
+
+    S11 is already good enough when it is at or below the target, for example
+    actual=-13 dB and target=-10 dB. Only worse values are penalized:
+
+        e_s11 = 0, if s11 <= target
+        e_s11 = (s11 - target) / abs(target), otherwise
+    """
+
+    actual = float(actual_s11_db)
+    target = float(target_s11_db)
+    if actual <= target:
+        return 0.0
+    return (actual - target) / max(abs(target), OBJECTIVE_EPSILON)
+
+
 def normalized_relative_error_optional(
     actual: Optional[float],
     target: Optional[float],
@@ -241,19 +282,56 @@ def normalized_relative_error_optional(
     return normalized_relative_error(float(actual), float(target), epsilon=epsilon)
 
 
-def _extract_bandwidth_target(paper: Dict[str, Any]) -> Optional[float]:
-    """Extract a 10 dB bandwidth target from Paper_Performance."""
+def bandwidth_edge_error_optional(
+    simulated_start: Optional[float],
+    simulated_end: Optional[float],
+    target_start: Optional[float],
+    target_end: Optional[float],
+    epsilon: float = OBJECTIVE_EPSILON,
+) -> Optional[float]:
+    """Compute the paper-band edge error.
+
+    Formula requested by the optimization update:
+
+        E_edge =
+            |f_low_sim - f_low_paper| / |f_low_paper|
+          + |f_high_sim - f_high_paper| / |f_high_paper|
+
+    A missing simulated or paper edge returns None so the caller can fall back
+    to legacy bandwidth_ghz error when needed.
+    """
+
+    if target_start is None or target_end is None:
+        return None
+    low_error = (
+        normalized_relative_error(float(simulated_start), float(target_start), epsilon=epsilon)
+        if simulated_start is not None
+        else 1.0
+    )
+    high_error = (
+        normalized_relative_error(float(simulated_end), float(target_end), epsilon=epsilon)
+        if simulated_end is not None
+        else 1.0
+    )
+    return low_error + high_error
+
+
+def _extract_bandwidth_target(paper: Dict[str, Any]) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    """Extract 10 dB bandwidth width and edge targets from Paper_Performance."""
 
     bandwidth = paper.get("Bandwidth_10dB")
     if isinstance(bandwidth, dict):
         direct = _number_or_none(bandwidth.get("Bandwidth_GHz"))
         if direct is not None:
-            return direct
+            width = direct
+        else:
+            width = None
         start = _number_or_none(bandwidth.get("Start_GHz"))
         end = _number_or_none(bandwidth.get("End_GHz"))
-        if start is not None and end is not None:
-            return abs(float(end) - float(start))
-    return _number_or_none(paper.get("Bandwidth_GHz"))
+        if width is None and start is not None and end is not None:
+            width = abs(float(end) - float(start))
+        return width, start, end
+    return _number_or_none(paper.get("Bandwidth_GHz")), None, None
 
 
 def _extract_s11_target(paper: Dict[str, Any], fallback_target_s11_db: float) -> float:
@@ -284,6 +362,17 @@ def _first_number(value: Any) -> Optional[float]:
     if isinstance(value, (list, tuple)) and value:
         return _number_or_none(value[0])
     return _number_or_none(value)
+
+
+def _first_positive_number(value: Any) -> Optional[float]:
+    """Return the first positive numeric value from a list-like object."""
+
+    values = value if isinstance(value, (list, tuple)) else (value,)
+    for item in values:
+        number = _number_or_none(item)
+        if number is not None and number > 0.0:
+            return number
+    return None
 
 
 def _number_or_none(value: Any) -> Optional[float]:

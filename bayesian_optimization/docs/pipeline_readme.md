@@ -171,6 +171,7 @@ standard
 optimized_bs_seed
 geometry_primitives
 graph_local_primitives
+graph_local_lines
 ```
 
 参数化阶段测试 runner 支持：
@@ -179,6 +180,7 @@ graph_local_primitives
 standard
 geometry_primitives
 graph_local_primitives
+graph_local_lines
 ```
 
 ### standard
@@ -302,6 +304,44 @@ repair_fig.png
 
 ```text
 graph_local_primitives -> geometry_primitives -> standard
+```
+
+### graph_local_lines
+
+入口:
+- `geometry_graph_parameterizer.py`
+- `fss_parameterized_cst_pipeline.py`
+
+主流程:
+
+```text
+repair_fig.png
+  -> adaptive edge preprocessing
+  -> VTracer centerline extraction
+  -> skeleton graph extraction
+  -> graph edge split
+  -> forced local line fitting
+  -> line-only graph-aware JSON
+  -> CST compact line reconstruction
+```
+
+设计目标:
+- 复用 `graph_local_primitives` 的拓扑保护能力。
+- 禁止 arc / spline primitive 输出；曲线区域会按采样折线拆成多段 `line` primitive。
+- 输出 `backend=graph_local_lines`，`metadata.line_only_parameterization=true`。
+- component 的 `fallback_points` / `resampled_points` 保存折线采样顶点，避免把整段曲线压成首尾一根弦。
+
+使用命令:
+
+```powershell
+D:\Anaconda\envs\linefor\python.exe .\fss_parameterized_cst_pipeline.py --parameterization-mode graph_local_lines
+```
+
+失败策略:
+
+```text
+graph_local_lines is strict line-only mode.
+It does not fall back to geometry_primitives or standard because those modes may emit arc/spline primitives.
 ```
 
 ## 6. 参数化 JSON

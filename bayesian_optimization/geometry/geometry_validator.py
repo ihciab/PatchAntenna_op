@@ -4,6 +4,7 @@ import math
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from bayesian_optimization.geometry.primitive_analyzer import analyze_primitives
 from bayesian_optimization.geometry.primitive_mutator import collect_component_cache_points, parse_points
 
 
@@ -42,6 +43,10 @@ class GeometryValidationConfig:
     min_edge_length_px: float = 0.20
     max_outside_canvas_ratio: float = 0.15
     allow_reference_component_mismatch: bool = False
+    enable_substrate_edge_clearance: bool = True
+    substrate_edge_clearance_ratio: float = 0.02
+    min_substrate_edge_clearance_px: float = 10.0
+    allow_feedline_port_corridor_clearance: bool = True
 
 
 def make_topology_signature(payload: Dict[str, Any]) -> TopologySignature:
@@ -58,6 +63,7 @@ def validate_geometry(
     payload: Dict[str, Any],
     reference_signature: Optional[TopologySignature] = None,
     config: Optional[GeometryValidationConfig] = None,
+    port_summary: Optional[Dict[str, Any]] = None,
 ) -> ValidationReport:
     """CST 构建前几何验证。
 
@@ -124,6 +130,20 @@ def validate_geometry(
     if outside_ratio > cfg.max_outside_canvas_ratio:
         report.reasons.append(f"too many points outside canvas: {outside_ratio:.3f}")
 
+    substrate_clearance = validate_substrate_edge_clearance(payload, cfg, port_summary=port_summary)
+    if substrate_clearance:
+        report.metrics["substrate_edge_clearance"] = substrate_clearance
+        if not bool(substrate_clearance.get("valid", True)):
+            for violation in substrate_clearance.get("violations", [])[:8]:
+                report.reasons.append(
+                    "non-port metal too close to substrate edge: "
+                    f"{violation.get('primitive_id')} clearance={violation.get('clearance_px'):.3f}px "
+                    f"< required={substrate_clearance.get('required_clearance_px'):.3f}px"
+                )
+            extra = len(substrate_clearance.get("violations", [])) - 8
+            if extra > 0:
+                report.reasons.append(f"{extra} additional substrate edge clearance violations")
+
     report.metrics.update(
         {
             "component_count": len(components),
@@ -165,6 +185,169 @@ def geometry_complexity_metrics(payload: Dict[str, Any], validation: Optional[Va
     if validation:
         metrics.update(validation.metrics)
     return metrics
+
+
+def validate_substrate_edge_clearance(
+    payload: Dict[str, Any],
+    config: GeometryValidationConfig,
+    port_summary: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Validate that non-port metal stays away from substrate edges.
+
+    Input: parameterization payload, validation config, and optional port summary.
+    Output: JSON-safe clearance report.
+    Algorithm purpose: prevent BO from moving non-port patch/slot/line geometry
+    onto the dielectric board boundary while still allowing the explicit port
+    feed corridor to approach the board edge.
+    """
+
+    if not config.enable_substrate_edge_clearance:
+        return {}
+    substrate_bbox = substrate_bbox_from_payload(payload)
+    if substrate_bbox is None:
+        return {
+            "valid": True,
+            "enabled": True,
+            "skipped": True,
+            "reason": "canvas bbox unavailable; substrate edge clearance not evaluated",
+        }
+
+    min_x, min_y, max_x, max_y = substrate_bbox
+    width = max_x - min_x
+    height = max_y - min_y
+    if width <= 0.0 or height <= 0.0:
+        return {
+            "valid": True,
+            "enabled": True,
+            "skipped": True,
+            "reason": "invalid substrate bbox",
+            "substrate_bbox": list(substrate_bbox),
+        }
+
+    required = max(
+        float(config.min_substrate_edge_clearance_px),
+        float(config.substrate_edge_clearance_ratio) * min(width, height),
+    )
+    try:
+        analysis = analyze_primitives(payload, port_summary=port_summary)
+    except Exception as exc:
+        return {
+            "valid": True,
+            "enabled": True,
+            "skipped": True,
+            "reason": f"primitive analysis failed: {exc}",
+            "substrate_bbox": list(substrate_bbox),
+            "required_clearance_px": required,
+        }
+
+    port_context = analysis.get("summary", {}).get("port_context", {}) or {}
+    min_clearance = None
+    violations: List[Dict[str, Any]] = []
+    checked_count = 0
+    exempt_count = 0
+    for primitive in analysis.get("primitives", []) or []:
+        points = [tuple(point) for point in primitive.get("points", []) if len(point) >= 2]
+        if not points:
+            continue
+        clearance = min(point_substrate_edge_clearance((float(x), float(y)), substrate_bbox) for x, y in points)
+        min_clearance = clearance if min_clearance is None else min(min_clearance, clearance)
+        if primitive.get("role") == "PORT":
+            exempt_count += 1
+            continue
+        if is_feedline_port_corridor_exempt(primitive, port_context, config):
+            exempt_count += 1
+            continue
+        checked_count += 1
+        if clearance < required:
+            violations.append(
+                {
+                    "primitive_id": primitive.get("primitive_id"),
+                    "type": primitive.get("type"),
+                    "role": primitive.get("role"),
+                    "clearance_px": float(clearance),
+                    "bbox": primitive.get("bbox"),
+                    "points": [[float(x), float(y)] for x, y in points],
+                }
+            )
+
+    return {
+        "valid": not violations,
+        "enabled": True,
+        "substrate_bbox": list(substrate_bbox),
+        "required_clearance_px": float(required),
+        "minimum_clearance_px": float(min_clearance) if min_clearance is not None else None,
+        "checked_non_port_primitive_count": checked_count,
+        "exempt_port_or_feed_corridor_count": exempt_count,
+        "violation_count": len(violations),
+        "violations": violations,
+        "policy": "PORT primitives are exempt; FEEDLINE primitives in the inferred port corridor are exempt.",
+    }
+
+
+def substrate_bbox_from_payload(payload: Dict[str, Any]) -> Optional[Tuple[float, float, float, float]]:
+    """Return substrate/canvas bbox in parameterization coordinates."""
+
+    canvas = payload.get("canvas") or {}
+    width = _finite_positive(canvas.get("width"))
+    height = _finite_positive(canvas.get("height"))
+    if width is not None and height is not None:
+        return 0.0, 0.0, width, height
+    return None
+
+
+def point_substrate_edge_clearance(point: Point, bbox: Sequence[float]) -> float:
+    """Return signed distance from a point to the nearest substrate bbox edge."""
+
+    x, y = point
+    min_x, min_y, max_x, max_y = [float(value) for value in bbox[:4]]
+    return min(x - min_x, max_x - x, y - min_y, max_y - y)
+
+
+def is_feedline_port_corridor_exempt(
+    primitive: Dict[str, Any],
+    port_context: Dict[str, Any],
+    config: GeometryValidationConfig,
+) -> bool:
+    """Allow the explicit feed corridor near the excitation port."""
+
+    if not config.allow_feedline_port_corridor_clearance:
+        return False
+    if primitive.get("role") != "FEEDLINE":
+        return False
+    center = _primitive_center(primitive)
+    if center is None:
+        return False
+    for key in ("core_bbox", "neighbor_bbox"):
+        bbox = port_context.get(key)
+        if isinstance(bbox, list) and len(bbox) >= 4 and _point_in_bbox(center, bbox):
+            return True
+    return False
+
+
+def _primitive_center(primitive: Dict[str, Any]) -> Optional[Point]:
+    points = [tuple(point) for point in primitive.get("points", []) if len(point) >= 2]
+    if not points:
+        return None
+    return (
+        sum(float(point[0]) for point in points) / len(points),
+        sum(float(point[1]) for point in points) / len(points),
+    )
+
+
+def _point_in_bbox(point: Point, bbox: Sequence[float]) -> bool:
+    if len(bbox) < 4:
+        return False
+    return float(bbox[0]) <= point[0] <= float(bbox[2]) and float(bbox[1]) <= point[1] <= float(bbox[3])
+
+
+def _finite_positive(value: Any) -> Optional[float]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isfinite(number) and number > 0.0:
+        return number
+    return None
 
 
 def _component_points(component: Dict[str, Any]) -> List[Point]:

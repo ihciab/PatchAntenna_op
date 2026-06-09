@@ -22,6 +22,10 @@ from bayesian_optimization.geometry.port_summary_utils import find_port_summary,
 
 
 Point = Tuple[float, float]
+CURVE_PRIMITIVE_TYPES = {"ARC", "CURVE", "BSPLINE"}
+CURVE_PARAMETERIZATION_NATIVE = "native"
+CURVE_PARAMETERIZATION_LINEARIZED = "linearized"
+DEFAULT_CURVE_PARAMETERIZATION_MODE = CURVE_PARAMETERIZATION_NATIVE
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,7 @@ class PrimitiveRecord:
     component_index: int
     primitive_index: int
     source_key: str
+    original_type: Optional[str] = None
     start_idx: Optional[int] = None
     end_idx: Optional[int] = None
     point_roles: List[str] = field(default_factory=list)
@@ -70,6 +75,7 @@ def analyze_primitives(
     payload_or_path: Union[Dict[str, Any], str, Path],
     output_dir: Optional[Union[str, Path]] = None,
     port_summary: Optional[Dict[str, Any]] = None,
+    curve_parameterization_mode: str = DEFAULT_CURVE_PARAMETERIZATION_MODE,
 ) -> Dict[str, Any]:
     """Analyze primitive type, role, points, and optimization mode.
 
@@ -80,6 +86,7 @@ def analyze_primitives(
     """
 
     payload = load_parameterization(payload_or_path) if isinstance(payload_or_path, (str, Path)) else payload_or_path
+    curve_mode = normalize_curve_parameterization_mode(curve_parameterization_mode)
     all_points = collect_payload_points(payload)
     payload_bbox = point_bbox(all_points) if all_points else (0.0, 0.0, 1.0, 1.0)
     port_context = infer_port_context(payload, payload_bbox, port_summary)
@@ -87,8 +94,11 @@ def analyze_primitives(
     records: List[PrimitiveRecord] = []
     for component_index, component in enumerate(payload.get("components", []) or []):
         for source_key, primitive_index, primitive in iter_component_primitives(component):
-            primitive_type = classify_primitive_type(primitive)
-            points = extract_primitive_points(component, primitive, primitive_type)
+            original_type = classify_primitive_type(primitive)
+            primitive_type = effective_primitive_type(original_type, curve_mode)
+            points = extract_primitive_points(component, primitive, original_type)
+            if primitive_type == "LINE" and original_type in CURVE_PRIMITIVE_TYPES:
+                points = line_endpoints(points)
             if not points:
                 continue
             primitive_id = make_primitive_id(component, component_index, primitive, primitive_index)
@@ -105,6 +115,7 @@ def analyze_primitives(
                     component_index=component_index,
                     primitive_index=primitive_index,
                     source_key=source_key,
+                    original_type=original_type if original_type != primitive_type else None,
                     start_idx=safe_int(primitive.get("start_idx")),
                     end_idx=safe_int(primitive.get("end_idx")),
                     point_roles=point_roles,
@@ -117,10 +128,12 @@ def analyze_primitives(
         "line_count": sum(1 for record in records if record.type == "LINE"),
         "bspline_count": sum(1 for record in records if record.type == "BSPLINE"),
         "curve_count": sum(1 for record in records if record.type in {"ARC", "CURVE"}),
+        "linearized_curve_count": sum(1 for record in records if record.original_type in CURVE_PRIMITIVE_TYPES),
         "port_count": sum(1 for record in records if record.role == "PORT"),
         "feedline_count": sum(1 for record in records if record.role == "FEEDLINE"),
         "bbox": list(payload_bbox),
         "port_context": port_context,
+        "curve_parameterization_mode": curve_mode,
     }
     analysis = {
         "summary": summary,
@@ -159,10 +172,10 @@ def classify_primitive_type(primitive: Dict[str, Any]) -> str:
     """
 
     raw = str(primitive.get("type") or primitive.get("kind") or primitive.get("primitive_type") or "").lower()
-    if "line" in raw:
-        return "LINE"
     if "spline" in raw or "bspline" in raw:
         return "BSPLINE"
+    if "line" in raw:
+        return "LINE"
     if "arc" in raw:
         return "ARC"
     if "curve" in raw:
@@ -172,6 +185,50 @@ def classify_primitive_type(primitive: Dict[str, Any]) -> str:
     if "feed" in raw:
         return "FEEDLINE"
     return "UNKNOWN"
+
+
+def normalize_curve_parameterization_mode(mode: str) -> str:
+    """Normalize curve handling mode.
+
+    Input: raw mode name.
+    Output: `native` or `linearized`.
+    Algorithm purpose: keep the old primitive-aware curve/spline behavior as
+    the default while allowing BO to treat every curve primitive as a line.
+    """
+
+    value = str(mode or CURVE_PARAMETERIZATION_NATIVE).lower().strip()
+    aliases = {
+        "native": CURVE_PARAMETERIZATION_NATIVE,
+        "current": CURVE_PARAMETERIZATION_NATIVE,
+        "original": CURVE_PARAMETERIZATION_NATIVE,
+        "preserve": CURVE_PARAMETERIZATION_NATIVE,
+        "linearized": CURVE_PARAMETERIZATION_LINEARIZED,
+        "linear": CURVE_PARAMETERIZATION_LINEARIZED,
+        "line": CURVE_PARAMETERIZATION_LINEARIZED,
+        "lines": CURVE_PARAMETERIZATION_LINEARIZED,
+        "curves_as_lines": CURVE_PARAMETERIZATION_LINEARIZED,
+        "all_lines": CURVE_PARAMETERIZATION_LINEARIZED,
+    }
+    if value not in aliases:
+        raise ValueError(
+            "curve_parameterization_mode must be one of: "
+            "'native' or 'linearized'."
+        )
+    return aliases[value]
+
+
+def effective_primitive_type(original_type: str, curve_mode: str) -> str:
+    """Return the type used for BO analysis under the selected curve mode.
+
+    Input: schema-native primitive type and normalized curve mode.
+    Output: effective primitive type for role and variable generation.
+    Algorithm purpose: optionally weaken curve parameterization by routing
+    arcs, curves, and splines through the line mutation path.
+    """
+
+    if curve_mode == CURVE_PARAMETERIZATION_LINEARIZED and original_type in CURVE_PRIMITIVE_TYPES:
+        return "LINE"
+    return original_type
 
 
 def extract_primitive_points(
@@ -208,6 +265,20 @@ def extract_primitive_points(
         if len(sampled) >= 2:
             points = [sampled[0], sampled[-1]]
     return points
+
+
+def line_endpoints(points: Sequence[Point]) -> List[Point]:
+    """Reduce representative curve points to a straight line span.
+
+    Input: representative primitive points.
+    Output: first and last point only.
+    Algorithm purpose: let linearized curve mode keep the same source schema
+    while exposing every curve/spline primitive as a line-like BO primitive.
+    """
+
+    if len(points) <= 2:
+        return list(points)
+    return [points[0], points[-1]]
 
 
 def sample_component_range(component: Dict[str, Any], primitive: Dict[str, Any]) -> List[Point]:

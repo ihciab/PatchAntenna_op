@@ -53,6 +53,7 @@ MAX_ALLOWED_EVALUATIONS = 30
 EDITOR_RUN_CONFIG: Dict[str, Any] = {
     "RUN_WITH_EDITOR_CONFIG": True,
     "BASE_RUN_DIR": PROJECT_ROOT / "pipeline_runs" / "run_20260528_213238",
+    "INSTANCE_JSON_PATH": PROJECT_ROOT / "pipeline_test_instance.json",
     "OUTPUT_ROOT": PROJECT_ROOT / "optimization_runs",
     "RUN_NAME": "bo_editor_full30_213238",
     "LAYER_NAME": "layer0",
@@ -66,6 +67,7 @@ EDITOR_RUN_CONFIG: Dict[str, Any] = {
     "BUILD_ONLY": False,
     "SIMPLIFY_TOLERANCE_PX": 1.0,
     "GEOMETRY_FRAME": "svg",
+    "CURVE_PARAMETERIZATION_MODE": DEFAULT_CURVE_PARAMETERIZATION_MODE,
     "RANDOM_STATE": 42,
     # "auto": 优先 Optuna，失败则回退 skopt。
     # "optuna": 强制使用 Optuna TPESampler。
@@ -82,6 +84,7 @@ from bayesian_optimization.geometry.geometry_validator import (  # noqa: E402
 )
 from bayesian_optimization.geometry.geometry_validation import validate_geometry as validate_and_repair_cst_geometry  # noqa: E402
 from bayesian_optimization.geometry.primitive_mutator import (  # noqa: E402
+    DEFAULT_CURVE_PARAMETERIZATION_MODE,
     DesignVariable,
     PrimitiveInventory,
     extract_design_variables,
@@ -360,6 +363,7 @@ class OptimizationConfig:
     run_solver: bool = True
     simplify_tolerance_px: float = 1.0
     geometry_frame: str = "svg"
+    curve_parameterization_mode: str = DEFAULT_CURVE_PARAMETERIZATION_MODE
     random_state: int = 42
     optimizer_backend: str = "auto"
 
@@ -517,7 +521,11 @@ class OptimizationPipeline:
 
         self.validation_config = GeometryValidationConfig()
 
-        self.variables, self.inventory = extract_design_variables(self.payload, port_summary=self.port_summary)
+        self.variables, self.inventory = extract_design_variables(
+            self.payload,
+            port_summary=self.port_summary,
+            curve_parameterization_mode=self.config.curve_parameterization_mode,
+        )
         self.objective_weights = ObjectiveWeights()
         self.objective_profile = self._configure_objective_profile()
         self.optimizer = self._create_optimizer_backend()
@@ -530,7 +538,8 @@ class OptimizationPipeline:
             fallback_target_frequency_ghz=self.config.target_frequency_ghz,
             fallback_target_s11_db=self.config.target_s11_db,
         )
-        self.config.target_frequency_ghz = float(profile.targets.resonance_ghz)
+        if profile.targets.resonance_ghz is not None:
+            self.config.target_frequency_ghz = float(profile.targets.resonance_ghz)
         self.config.target_s11_db = float(profile.targets.s11_db)
         set_current_objective_profile(profile)
         return profile
@@ -544,6 +553,7 @@ class OptimizationPipeline:
                 self.payload,
                 reference_signature=self.reference_signature,
                 config=self.validation_config,
+                port_summary=self.port_summary,
             )
             if not reference_report.valid:
                 logger.warning("初始参数化 JSON 已存在几何风险: %s", reference_report.reasons)
@@ -616,8 +626,14 @@ class OptimizationPipeline:
             output_dir=eval_dir,
             iteration=evaluation,
             port_summary=self.port_summary,
+            curve_parameterization_mode=self.config.curve_parameterization_mode,
         )
-        validation = validate_geometry(mutated, self.reference_signature, self.validation_config)
+        validation = validate_geometry(
+            mutated,
+            self.reference_signature,
+            self.validation_config,
+            port_summary=self.port_summary,
+        )
         geometry_metrics = geometry_complexity_metrics(mutated, validation)
         deformation_meta = (mutated.get("optimization_metadata") or {}).get("feature_constrained_deformation") or {}
         manufacturability = deformation_meta.get("manufacturability_report") or {}
@@ -680,7 +696,12 @@ class OptimizationPipeline:
         cst_handoff_payload = prepare_cst_handoff_payload(mutated)
         if cst_handoff_payload is not mutated:
             write_json(eval_dir / "mutation_raw_curve_parameterization.json", mutated)
-            handoff_report = validate_geometry(cst_handoff_payload, None, self.validation_config)
+            handoff_report = validate_geometry(
+                cst_handoff_payload,
+                None,
+                self.validation_config,
+                port_summary=self.port_summary,
+            )
             write_json(eval_dir / "cst_handoff_validation.json", handoff_report.to_dict())
 
         repaired_payload, cst_geometry_report = validate_and_repair_cst_geometry(
@@ -801,6 +822,13 @@ class OptimizationPipeline:
         cst_config.simplify_tolerance_px = self.config.simplify_tolerance_px
         cst_config.geometry_frame = self.config.geometry_frame
         cst_config.close_project = True
+        self._validate_cst_frequency_range(cst_config.f0, cst_config.f1)
+        self.state.logger.info(
+            "CST S11 simulation frequency range: %.6g-%.6g %s",
+            cst_config.f0,
+            cst_config.f1,
+            cst_config.frequency_unit,
+        )
 
         if cst_config.run_solver and cst_config.port_summary_path is None:
             raise ValueError("run_solver=True requires --port-summary for CST port reconstruction")
@@ -808,6 +836,37 @@ class OptimizationPipeline:
         cst_config.project_folder.mkdir(parents=True, exist_ok=True)
         builder = ParameterizedJsonCSTBuilder(design_json, cst_config)
         return builder.build()
+
+    @staticmethod
+    def _validate_cst_frequency_range(f0: float, f1: float) -> None:
+        """Validate the CST S11 simulation frequency range before building."""
+
+        if not math.isfinite(float(f0)) or not math.isfinite(float(f1)):
+            raise ValueError(f"CST frequency range must be finite, got f0={f0}, f1={f1}")
+        if float(f1) <= float(f0):
+            raise ValueError(f"CST frequency range requires f1 > f0, got f0={f0}, f1={f1}")
+
+    def _cst_frequency_range_metadata(self) -> Dict[str, Any]:
+        """Return the CST S11 frequency range resolved from instance JSON."""
+
+        if self.config.instance_json is None:
+            return {
+                "source": "default_CSTParametricConfig",
+                "f0": 6.0,
+                "f1": 14.0,
+                "unit": "GHz",
+            }
+
+        from bayesian_optimization.simulation.parameterized_json_to_cst import load_instance_config
+
+        cst_config = load_instance_config(self.config.instance_json, self.config.layer_name)
+        self._validate_cst_frequency_range(cst_config.f0, cst_config.f1)
+        return {
+            "source": str(self.config.instance_json),
+            "f0": float(cst_config.f0),
+            "f1": float(cst_config.f1),
+            "unit": cst_config.frequency_unit,
+        }
 
     def _create_optimizer_backend(self):
         """根据配置创建 Optuna/skopt/auto 优化后端。"""
@@ -936,9 +995,11 @@ class OptimizationPipeline:
                 "max_evaluations": self.config.max_evaluations,
                 "target_frequency_ghz": self.config.target_frequency_ghz,
                 "target_s11_db": self.config.target_s11_db,
+                "cst_s11_frequency_range": self._cst_frequency_range_metadata(),
                 "run_solver": self.config.run_solver,
                 "geometry_frame": self.config.geometry_frame,
                 "simplify_tolerance_px": self.config.simplify_tolerance_px,
+                "curve_parameterization_mode": self.config.curve_parameterization_mode,
                 "optimizer_backend": self.config.optimizer_backend,
                 "storage_policy": {
                     "run_directory": "always create a timestamped unique run folder",
@@ -952,6 +1013,13 @@ class OptimizationPipeline:
                     "counts_toward_no_improvement_patience": False,
                     "counts_toward_early_stop_invalid_ratio": False,
                     "max_invalid_ratio_retained_for_compatibility": self.config.max_invalid_ratio,
+                },
+                "substrate_edge_clearance_policy": {
+                    "enabled": self.validation_config.enable_substrate_edge_clearance,
+                    "clearance_ratio_of_min_canvas_dimension": self.validation_config.substrate_edge_clearance_ratio,
+                    "minimum_clearance_px": self.validation_config.min_substrate_edge_clearance_px,
+                    "allow_feedline_port_corridor": self.validation_config.allow_feedline_port_corridor_clearance,
+                    "action": "reject_non_port_geometry_before_cst",
                 },
             },
             "design_variables": [variable.to_dict() for variable in self.variables],
@@ -1007,6 +1075,8 @@ class OptimizationPipeline:
         fig.tight_layout()
         fig.savefig(self.state.plots_dir / "objective_history.png", dpi=180)
         plt.close(fig)
+
+        self._save_objective_error_plot(plt, completed)
 
         fig, ax = plt.subplots(figsize=(8, 4.8))
         ax.scatter(primary_variable_values, objectives, c=colors, s=52)
@@ -1107,6 +1177,72 @@ class OptimizationPipeline:
         ax.grid(True, axis="x", alpha=0.3)
         fig.tight_layout()
         fig.savefig(self.state.plots_dir / "optimizer_param_importance.png", dpi=180)
+        plt.close(fig)
+
+    def _save_objective_error_plot(self, plt: Any, records: List[EvaluationRecord]) -> None:
+        """Save normalized objective-error histories for each BO evaluation."""
+
+        rows: List[Dict[str, Any]] = []
+        for record in records:
+            breakdown = record.objective_breakdown or {}
+            normalized = breakdown.get("normalized_errors") or {}
+            if not normalized:
+                continue
+            rows.append(
+                {
+                    "evaluation": record.evaluation,
+                    "normalized_errors": dict(normalized),
+                    "weighted_terms": {
+                        "resonance": float(breakdown.get("primary_frequency_error", 0.0)),
+                        "bandwidth_edges": float(breakdown.get("bandwidth_reward", 0.0)),
+                        "s11": float(breakdown.get("target_s11_penalty", 0.0)),
+                        "gain": float(breakdown.get("gain_penalty", 0.0)),
+                    },
+                    "total": record.objective,
+                }
+            )
+        write_json(self.state.plots_dir / "objective_error_history.json", rows)
+        if not rows:
+            return
+
+        evaluations = [int(row["evaluation"]) for row in rows]
+        error_keys = [
+            ("resonance", "E_res"),
+            ("bandwidth_edges", "E_edge"),
+            ("s11", "E_s11"),
+            ("gain", "E_gain"),
+        ]
+        weighted_keys = [
+            ("resonance", "w_res*E_res"),
+            ("bandwidth_edges", "w_bw*E_edge"),
+            ("s11", "w_s11*E_s11"),
+            ("gain", "w_gain*E_gain"),
+        ]
+
+        fig, axes = plt.subplots(2, 1, figsize=(9, 7.2), sharex=True)
+        for key, label in error_keys:
+            values = []
+            for row in rows:
+                value = row["normalized_errors"].get(key)
+                if value is None and key == "bandwidth_edges":
+                    value = row["normalized_errors"].get("bandwidth")
+                values.append(float(value) if value is not None else math.nan)
+            axes[0].plot(evaluations, values, marker="o", linewidth=1.4, label=label)
+        axes[0].set_ylabel("Normalized Error")
+        axes[0].set_title("Objective Error Terms")
+        axes[0].grid(True, alpha=0.3)
+        axes[0].legend(fontsize=8)
+
+        for key, label in weighted_keys:
+            values = [float(row["weighted_terms"].get(key, 0.0)) for row in rows]
+            axes[1].plot(evaluations, values, marker="o", linewidth=1.4, label=label)
+        axes[1].set_xlabel("Evaluation")
+        axes[1].set_ylabel("Weighted Term")
+        axes[1].grid(True, alpha=0.3)
+        axes[1].legend(fontsize=8)
+
+        fig.tight_layout()
+        fig.savefig(self.state.plots_dir / "objective_error_history.png", dpi=180)
         plt.close(fig)
 
     def _save_optimizer_trials(self) -> None:
@@ -1273,6 +1409,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--build-only", action="store_true", help="Build CST only; objective receives CST failure penalty.")
     parser.add_argument("--simplify-tolerance-px", type=float, default=1.0)
     parser.add_argument("--geometry-frame", choices=["svg", "component"], default="svg")
+    parser.add_argument(
+        "--curve-parameterization-mode",
+        choices=["linearized", "native"],
+        default=DEFAULT_CURVE_PARAMETERIZATION_MODE,
+        help="linearized treats arc/spline/curve primitives as straight line spans for BO; native keeps old curve-aware rules.",
+    )
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument(
         "--optimizer-backend",
@@ -1302,6 +1444,7 @@ def build_config(args: argparse.Namespace) -> OptimizationConfig:
         run_solver=not args.build_only,
         simplify_tolerance_px=args.simplify_tolerance_px,
         geometry_frame=args.geometry_frame,
+        curve_parameterization_mode=args.curve_parameterization_mode,
         random_state=args.random_state,
         optimizer_backend=args.optimizer_backend,
     )
@@ -1311,7 +1454,7 @@ def build_config_from_editor_config(editor_config: Dict[str, Any]) -> Optimizati
     """把 EDITOR_RUN_CONFIG 转换为 OptimizationConfig，方便 IDE 直接运行。"""
     base_run_dir = Path(editor_config["BASE_RUN_DIR"])
     parameter_json = base_run_dir / "02_parameterization" / "curve_parameterization.json"
-    instance_json = base_run_dir / "prepared_instance.json"
+    instance_json = Path(editor_config.get("INSTANCE_JSON_PATH") or (base_run_dir / "prepared_instance.json"))
     port_summary = base_run_dir / "patch_port_summary.json"
     if not port_summary.exists():
         port_summary = base_run_dir / "port_summary.json"
@@ -1333,6 +1476,7 @@ def build_config_from_editor_config(editor_config: Dict[str, Any]) -> Optimizati
         run_solver=not bool(editor_config["BUILD_ONLY"]),
         simplify_tolerance_px=float(editor_config["SIMPLIFY_TOLERANCE_PX"]),
         geometry_frame=str(editor_config["GEOMETRY_FRAME"]),
+        curve_parameterization_mode=str(editor_config.get("CURVE_PARAMETERIZATION_MODE", DEFAULT_CURVE_PARAMETERIZATION_MODE)),
         random_state=int(editor_config["RANDOM_STATE"]),
         optimizer_backend=str(editor_config["OPTIMIZER_BACKEND"]),
     )
@@ -1356,6 +1500,8 @@ def validate_config(config: OptimizationConfig) -> None:
         raise ValueError("max_invalid_ratio must be in (0, 1]")
     if config.optimizer_backend not in {"auto", "optuna", "skopt"}:
         raise ValueError("optimizer_backend must be one of: auto, optuna, skopt")
+    if config.curve_parameterization_mode not in {"linearized", "native"}:
+        raise ValueError("curve_parameterization_mode must be one of: linearized, native")
 
 
 def main() -> None:

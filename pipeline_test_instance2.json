@@ -28,15 +28,16 @@
   "Paper_Performance": {
 
     "Target_Resonances_GHz": [
-      0.00
+      9.880,
+      10.120
     ],
 
     "Resonance_Count": 2,
 
     "Bandwidth_10dB": {
-      "Start_GHz": 9.48,
-      "End_GHz": 10.53,
-      "Bandwidth_GHz": 1.05,
+      "Start_GHz": 9.821,
+      "End_GHz": 10.162,
+      "Bandwidth_GHz": 0.341,
       "Fractional_Bandwidth_Percent": 10.5
     },
 

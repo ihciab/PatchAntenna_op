@@ -43,9 +43,9 @@ class ParameterizationOnlyRunner:
         self.output_root = Path(output_root)
         self.layer_name = str(layer_name)
         self.parameterization_mode = str(parameterization_mode).lower().strip()
-        if self.parameterization_mode not in ("standard", "geometry_primitives", "graph_local_primitives"):
+        if self.parameterization_mode not in ("standard", "geometry_primitives", "graph_local_primitives", "graph_local_lines"):
             raise ValueError(
-                "parameterization_mode must be one of: standard, geometry_primitives, graph_local_primitives"
+                "parameterization_mode must be one of: standard, geometry_primitives, graph_local_primitives, graph_local_lines"
             )
         self.skip_fss_cleanup = bool(skip_fss_cleanup)
         self.honor_instance_skip = bool(honor_instance_skip)
@@ -80,10 +80,15 @@ class ParameterizationOnlyRunner:
         actual_mode = self.parameterization_mode
         status: Dict[str, Any] = {}
         try:
-            if self.parameterization_mode == "graph_local_primitives":
-                json_path, status = self._parameterize_via_graph_local_primitives(image_path)
+            if self.parameterization_mode in {"graph_local_primitives", "graph_local_lines"}:
+                json_path, status = self._parameterize_via_graph_local_primitives(
+                    image_path,
+                    force_line_primitives=self.parameterization_mode == "graph_local_lines",
+                )
                 if status.get("fallback"):
-                    actual_mode = "graph_local_primitives_internal_fallback"
+                    if self.parameterization_mode == "graph_local_lines":
+                        raise ValueError("graph_local_lines does not allow fallback to non-line parameterization")
+                    actual_mode = f"{self.parameterization_mode}_internal_fallback"
             elif self.parameterization_mode == "geometry_primitives":
                 json_path, status = self._parameterize_via_geometry_primitives(image_path)
                 if status.get("fallback"):
@@ -94,18 +99,20 @@ class ParameterizationOnlyRunner:
             if self.parameterization_mode == "standard":
                 raise
             self._log(f"{self.parameterization_mode} failed: {exc}")
-            if self.parameterization_mode == "graph_local_primitives":
-                self._log("fallback chain: graph_local_primitives -> geometry_primitives")
+            if self.parameterization_mode in {"graph_local_primitives", "graph_local_lines"}:
+                if self.parameterization_mode == "graph_local_lines":
+                    raise
+                self._log(f"fallback chain: {self.parameterization_mode} -> geometry_primitives")
                 try:
                     json_path, status = self._parameterize_via_geometry_primitives(image_path)
-                    actual_mode = "graph_local_primitives_geometry_primitives_fallback"
+                    actual_mode = f"{self.parameterization_mode}_geometry_primitives_fallback"
                     if status.get("fallback"):
-                        actual_mode = "graph_local_primitives_geometry_primitives_standard_topology_fallback"
+                        actual_mode = f"{self.parameterization_mode}_geometry_primitives_standard_topology_fallback"
                 except Exception as second_exc:
                     self._log(f"geometry_primitives failed: {second_exc}")
                     self._log("fallback chain: geometry_primitives -> standard")
                     json_path = self._parameterize_standard(image_path)
-                    actual_mode = "graph_local_primitives_standard_fallback"
+                    actual_mode = f"{self.parameterization_mode}_standard_fallback"
             else:
                 self._log("fallback chain: geometry_primitives -> standard")
                 json_path = self._parameterize_standard(image_path)
@@ -251,12 +258,17 @@ class ParameterizationOnlyRunner:
         self._log(f"geometry_primitives json: {json_path}")
         return json_path, status
 
-    def _parameterize_via_graph_local_primitives(self, image_path: Path) -> tuple[Path, Dict[str, Any]]:
+    def _parameterize_via_graph_local_primitives(
+        self,
+        image_path: Path,
+        force_line_primitives: bool = False,
+    ) -> tuple[Path, Dict[str, Any]]:
         from bayesian_optimization.geometry.geometry_graph_parameterizer import GraphBasedLocalSplineParameterizer
 
         parameterizer = GraphBasedLocalSplineParameterizer(
             image_path=image_path,
             save_dir=self.param_dir,
+            force_line_primitives=force_line_primitives,
             line_tolerance_px=1.6,
             arc_tolerance_px=1.5,
             residual_spline_tolerance_px=2.2,
@@ -285,7 +297,8 @@ class ParameterizationOnlyRunner:
         )
         json_path = parameterizer.run()
         status = getattr(parameterizer, "last_status", {})
-        self._log(f"graph_local_primitives json: {json_path}")
+        mode_name = "graph_local_lines" if force_line_primitives else "graph_local_primitives"
+        self._log(f"{mode_name} json: {json_path}")
         return json_path, status
 
     def _should_skip_fss_cleanup(self, instance: Dict[str, Any], layer_cfg: Dict[str, Any]) -> bool:
@@ -413,7 +426,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-name", default=None, help="Optional fixed run directory name.")
     parser.add_argument(
         "--parameterization-mode",
-        choices=["standard", "geometry_primitives", "graph_local_primitives"],
+        choices=["standard", "geometry_primitives", "graph_local_primitives", "graph_local_lines"],
         default="graph_local_primitives",
         help="Parameterization backend to test.",
     )

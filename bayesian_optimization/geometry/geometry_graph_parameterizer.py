@@ -30,10 +30,13 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
         graph_curvature_split_percentile: float = 92.0,
         max_local_spline_rms_error_px: float = 2.0,
         max_local_spline_length_shrink_ratio: float = 0.04,
+        force_line_primitives: bool = False,
         **kwargs: Any,
     ):
         super().__init__(image_path=image_path, save_dir=save_dir, **kwargs)
-        self.stage_dir = self.save_dir / "graph_local_primitives"
+        self.force_line_primitives = bool(force_line_primitives)
+        self.backend_name = "graph_local_lines" if self.force_line_primitives else "graph_local_primitives"
+        self.stage_dir = self.save_dir / self.backend_name
         self.edge_dir = self.stage_dir / "00_edges"
         self.vtracer_dir = self.stage_dir / "00_vtracer_centerline"
         self.contour_dir = self.stage_dir / "00_ordered_centerlines"
@@ -55,7 +58,7 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
         self.last_status = {
             "fallback": False,
             "fallback_reason": "",
-            "actual_backend": "graph_local_primitives",
+            "actual_backend": self.backend_name,
         }
 
     def run(self) -> Path:
@@ -113,6 +116,11 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
         parameterizer = params.parameterize(save_dir=self.vtracer_dir)
         vtracer_results = parameterizer.results()
         if len(vtracer_results) > max(80, self.max_centerline_components_for_geometry):
+            if self.force_line_primitives:
+                raise ValueError(
+                    "graph_local_lines refuses standard fallback because it would allow non-line primitives; "
+                    f"centerline_components={len(vtracer_results)}"
+                )
             return self._write_standard_topology_fallback(
                 params=params,
                 parameterizer=parameterizer,
@@ -174,9 +182,10 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
         aggregate_metrics = self._aggregate_metrics(components)
         aggregate_metrics.update(
             {
-                "backend": "graph_local_primitives",
+                "backend": self.backend_name,
                 "node_count": len(split_graph.get("nodes", [])),
                 "edge_count": len(split_graph.get("edges", [])),
+                "line_only_parameterization": self.force_line_primitives,
                 "topology_preservation_score": validation.get("topology_preservation_score", 0.0),
             }
         )
@@ -191,7 +200,7 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
 
         payload = {
             "schema_version": "3.0",
-            "backend": "graph_local_primitives",
+            "backend": self.backend_name,
             "trace_image_path": str(trace_copy_path),
             "svg_path": str(preview_svg_path),
             "metrics_path": str(self.stage_dir / "graph_primitives_metrics.json"),
@@ -210,7 +219,8 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
                 "vtracer_metrics": str(parameterizer.metrics_path() or ""),
                 "vtracer_intermediates": str(parameterizer.intermediate_dir() or ""),
                 "edge_selection": self.edge_selection_diagnostics,
-                "line_priority": "line > arc > local_spline",
+                "line_priority": "forced line only" if self.force_line_primitives else "line > arc > local_spline",
+                "line_only_parameterization": self.force_line_primitives,
                 "global_spline_used": False,
             },
             "stages": {
@@ -234,7 +244,7 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
         self.last_status = {
             "fallback": False,
             "fallback_reason": "",
-            "actual_backend": "graph_local_primitives",
+            "actual_backend": self.backend_name,
             "topology_validation": validation,
         }
         print(
@@ -437,7 +447,11 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
         features = self.compute_geometry_features(edge)
 
         line = self._fit_line_primitive_pca(pts)
-        if (
+        if self.force_line_primitives:
+            primitive = line
+            primitive["fit_method"] = "forced_single_line_endpoint_parameterization"
+            primitive["line_only_parameterization"] = True
+        elif (
             line["max_error"] <= self.line_tolerance_px
             and features.get("tangent_stability", 1.0) >= 0.72
         ) or self._should_accept_relaxed_fss_line(line, features):
@@ -461,8 +475,78 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
         primitive["end_node"] = int(edge["end_node"])
         primitive["features"] = features
         primitive["parameters"] = self._primitive_parameters(primitive)
-        primitive["fallback_points"] = pts.tolist()
+        primitive["fallback_points"] = primitive.get("points", pts.tolist()) if self.force_line_primitives else pts.tolist()
         return primitive
+
+    def fit_local_line_primitives(self, edge: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[List[float]]]:
+        """Approximate one graph edge with sampled line primitives only.
+
+        Input: graph edge with ordered_points.
+        Output: list of line primitives plus the polyline vertices they cover.
+        Algorithm purpose: keep graph-local topology while replacing arc/spline
+        candidates with a piecewise-linear approximation instead of one chord.
+        """
+
+        import numpy as np
+
+        pts = self._clean_points(edge.get("ordered_points", []))
+        if len(pts) < 2:
+            raise ValueError(f"edge {edge.get('id')} has fewer than 2 points")
+
+        features = self.compute_geometry_features(edge)
+        epsilon = max(0.45, min(self.line_tolerance_px * 0.45, self.resample_step_px * 0.35))
+        indices = sorted(set(int(index) for index in self._rdp_indices(pts, epsilon=epsilon)))
+        indices = [index for index in indices if 0 <= index < len(pts)]
+        if len(indices) < 2:
+            indices = [0, len(pts) - 1]
+
+        vertices = pts[indices]
+        primitives: List[Dict[str, Any]] = []
+        for segment_id, (start_i, end_i) in enumerate(zip(indices[:-1], indices[1:]), start=1):
+            if end_i <= start_i:
+                continue
+            start = pts[start_i]
+            end = pts[end_i]
+            span = pts[start_i : end_i + 1]
+            errors = self._line_errors(span, start, end)
+            direction = end - start
+            norm = float(np.linalg.norm(direction))
+            if norm > 1e-12:
+                direction = direction / norm
+            primitive = {
+                "type": "line",
+                "kind": "line",
+                "primitive_type": "line",
+                "fit_method": "forced_piecewise_line_parameterization",
+                "line_only_parameterization": True,
+                "start": start.tolist(),
+                "end": end.tolist(),
+                "points": [start.tolist(), end.tolist()],
+                "direction": direction.tolist(),
+                "max_error": float(np.max(errors)) if len(errors) else 0.0,
+                "mean_error": float(np.mean(errors)) if len(errors) else 0.0,
+                "effective_params": 4,
+                "parameter_count": 4,
+                "source_point_count": int(len(span)),
+                "source_start_index": int(start_i),
+                "source_end_index": int(end_i),
+                "segment_id": int(segment_id),
+                "source_edge_id": int(edge["id"]),
+                "start_node": int(edge["start_node"]),
+                "end_node": int(edge["end_node"]),
+                "features": features,
+            }
+            primitive["parameters"] = self._primitive_parameters(primitive)
+            primitive["fallback_points"] = primitive["points"]
+            primitive["visual_label"] = (
+                f"E{int(edge['id']):04d}.{segment_id:03d} LINE "
+                f"nodes={edge['start_node']}->{edge['end_node']}"
+            )
+            primitives.append(primitive)
+
+        if not primitives:
+            raise ValueError(f"edge {edge.get('id')} produced no line primitives")
+        return primitives, vertices.tolist()
 
     def _should_accept_relaxed_fss_line(self, line: Dict[str, Any], features: Dict[str, Any]) -> bool:
         """Accept slightly noisy long FSS straight traces as lines.
@@ -548,14 +632,18 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
     def _fit_graph_components(self, graph: Dict[str, Any]) -> List[Dict[str, Any]]:
         components: List[Dict[str, Any]] = []
         for component_id, edge in enumerate(graph.get("edges", []), start=1):
-            primitive = self.fit_local_primitive(edge)
-            primitive["segment_id"] = 1
-            primitive["kind"] = primitive.get("type", "spline")
-            primitive["visual_label"] = (
-                f"E{int(edge['id']):04d} {str(primitive.get('type', 'spline')).upper()} "
-                f"nodes={edge['start_node']}->{edge['end_node']}"
-            )
-            points = primitive.get("fallback_points") or edge.get("ordered_points") or []
+            if self.force_line_primitives:
+                primitives, points = self.fit_local_line_primitives(edge)
+            else:
+                primitive = self.fit_local_primitive(edge)
+                primitive["segment_id"] = 1
+                primitive["kind"] = primitive.get("type", "spline")
+                primitive["visual_label"] = (
+                    f"E{int(edge['id']):04d} {str(primitive.get('type', 'spline')).upper()} "
+                    f"nodes={edge['start_node']}->{edge['end_node']}"
+                )
+                primitives = [primitive]
+                points = primitive.get("fallback_points") or edge.get("ordered_points") or []
             component = {
                 "component_id": component_id,
                 "source_edge_id": int(edge["id"]),
@@ -567,13 +655,13 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
                 "sampled_point_count": int(len(points)),
                 "fallback_points": points,
                 "resampled_points": points,
-                "primitives": [primitive],
-                "segments": [primitive],
-                "metrics": self._component_metrics(points, [primitive]),
+                "primitives": primitives,
+                "segments": primitives,
+                "metrics": self._component_metrics(points, primitives),
             }
             components.append(component)
             self._write_json(self.local_fit_dir / f"edge_{int(edge['id']):04d}_fit.json", component)
-            self._write_edge_fit_preview(self.local_fit_dir / f"edge_{int(edge['id']):04d}_fit.png", edge, primitive)
+            self._write_edge_fit_preview(self.local_fit_dir / f"edge_{int(edge['id']):04d}_fit.png", edge, primitives)
         return components
 
     def _fit_line_primitive_pca(self, points: Any) -> Dict[str, Any]:
@@ -1039,7 +1127,7 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
             cv2.putText(overlay, "local primitive fit", (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (30, 30, 30), 2, cv2.LINE_AA)
         self._write_image(path, np.hstack([base, overlay]))
 
-    def _write_edge_fit_preview(self, path: Path, edge: Dict[str, Any], primitive: Dict[str, Any]) -> None:
+    def _write_edge_fit_preview(self, path: Path, edge: Dict[str, Any], primitive: Any) -> None:
         import cv2
         import numpy as np
 
@@ -1060,12 +1148,19 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
 
         raw_poly = localize(pts)
         cv2.polylines(canvas, [raw_poly.reshape(-1, 1, 2)], False, (190, 190, 190), 1, cv2.LINE_AA)
-        fit_pts = self._primitive_preview_points(primitive)
-        if len(fit_pts) >= 2:
-            fit_poly = localize(fit_pts)
-            color = {"line": (255, 144, 30), "arc": (40, 140, 242), "spline": (82, 168, 50)}.get(str(primitive.get("type")), (20, 20, 20))
-            cv2.polylines(canvas, [fit_poly.reshape(-1, 1, 2)], False, color, 2, cv2.LINE_AA)
-        cv2.putText(canvas, f"E{edge['id']} {primitive.get('type')}", (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (20, 20, 20), 1, cv2.LINE_AA)
+        primitives = primitive if isinstance(primitive, list) else [primitive]
+        type_label = "line"
+        for item in primitives:
+            if not isinstance(item, dict):
+                continue
+            fit_pts = self._primitive_preview_points(item)
+            if len(fit_pts) >= 2:
+                fit_poly = localize(fit_pts)
+                color = {"line": (255, 144, 30), "arc": (40, 140, 242), "spline": (82, 168, 50)}.get(str(item.get("type")), (20, 20, 20))
+                cv2.polylines(canvas, [fit_poly.reshape(-1, 1, 2)], False, color, 2, cv2.LINE_AA)
+            type_label = str(item.get("type", type_label))
+        suffix = f"{type_label} x{len(primitives)}" if len(primitives) > 1 else type_label
+        cv2.putText(canvas, f"E{edge['id']} {suffix}", (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (20, 20, 20), 1, cv2.LINE_AA)
         self._write_image(path, canvas)
 
     @classmethod

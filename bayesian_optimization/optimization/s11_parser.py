@@ -18,6 +18,8 @@ class S11Metrics:
     minimum_s11_db: float
     s11_at_target_db: float
     bandwidth_ghz: float
+    bandwidth_start_ghz: Optional[float]
+    bandwidth_end_ghz: Optional[float]
     point_count: int
 
     def to_dict(self):
@@ -33,13 +35,20 @@ def parse_s11_file(path: Path, target_frequency_ghz: float = 2.4, threshold_db: 
 
     resonance_freq, min_s11 = min(rows, key=lambda item: item[1])
     target_s11 = interpolate_s11(rows, target_frequency_ghz)
-    bandwidth = bandwidth_below_threshold(rows, threshold_db)
+    bandwidth_start, bandwidth_end = bandwidth_edges_below_threshold(rows, threshold_db)
+    bandwidth = (
+        float(bandwidth_end - bandwidth_start)
+        if bandwidth_start is not None and bandwidth_end is not None
+        else 0.0
+    )
     return S11Metrics(
         s11_path=path,
         resonant_frequency_ghz=resonance_freq,
         minimum_s11_db=min_s11,
         s11_at_target_db=target_s11,
         bandwidth_ghz=bandwidth,
+        bandwidth_start_ghz=bandwidth_start,
+        bandwidth_end_ghz=bandwidth_end,
         point_count=len(rows),
     )
 
@@ -86,10 +95,27 @@ def interpolate_s11(rows: Sequence[Point], target_frequency_ghz: float) -> float
 
 
 def bandwidth_below_threshold(rows: Sequence[Point], threshold_db: float = -10.0) -> float:
+    start, end = bandwidth_edges_below_threshold(rows, threshold_db)
+    if start is None or end is None:
+        return 0.0
+    return float(end - start)
+
+
+def bandwidth_edges_below_threshold(
+    rows: Sequence[Point],
+    threshold_db: float = -10.0,
+) -> Tuple[Optional[float], Optional[float]]:
+    """Return the first and last sampled frequencies whose S11 is below threshold.
+
+    The objective compares these simulated band edges against the paper's
+    Start_GHz/End_GHz targets. This keeps the legacy bandwidth_ghz value
+    available while exposing the extra information needed by the loss.
+    """
+
     below = [freq for freq, value in rows if value <= threshold_db]
     if not below:
-        return 0.0
-    return max(below) - min(below)
+        return None, None
+    return min(below), max(below)
 
 
 def _read_csv_like(text: str) -> List[Point]:

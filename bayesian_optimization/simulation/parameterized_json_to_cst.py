@@ -179,10 +179,23 @@ class ParameterizedJsonCSTBuilder:
 
     def _open_or_create_project(self) -> None:
         self.config.project_folder.mkdir(parents=True, exist_ok=True)
+        self._validate_frequency_range()
         ch.cst_create_project(str(self.config.cst_path))
         self.design_environment, self.cst_project, _ = ch.cst_open_project(str(self.config.cst_path))
         self.modeler = self.cst_project.modeler
         ch.cst_auto_init(self.modeler, self.config.f0, self.config.f1)
+
+    def _validate_frequency_range(self) -> None:
+        """Validate the CST solver frequency range before project initialization."""
+
+        if not math.isfinite(float(self.config.f0)) or not math.isfinite(float(self.config.f1)):
+            raise ValueError(
+                f"CST frequency range must be finite, got f0={self.config.f0}, f1={self.config.f1}"
+            )
+        if float(self.config.f1) <= float(self.config.f0):
+            raise ValueError(
+                f"CST frequency range requires f1 > f0, got f0={self.config.f0}, f1={self.config.f1}"
+            )
 
     def _load_materials(self) -> None:
         if self.config.substrate_material and self.config.substrate_material != "PEC":

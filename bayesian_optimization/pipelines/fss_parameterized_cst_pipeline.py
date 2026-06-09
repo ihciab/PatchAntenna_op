@@ -77,7 +77,7 @@ DEFAULT_INSTANCE_DICT: Dict[str, Any] = {
 # 3. BUILD_ONLY=True builds geometry only; False also starts CST solver.
 # 4. OUTPUT_ROOT stores all intermediate files from this pipeline.
 EDITOR_RUN_CONFIG: Dict[str, Any] = {
-    "INSTANCE_JSON_PATH": PROJECT_ROOT / "pipeline_test_instance.json",
+    "INSTANCE_JSON_PATH": PROJECT_ROOT / "pipeline_test_instance2.json",
     "RUN_WITH_INLINE_INSTANCE": False,
     "OUTPUT_ROOT": PROJECT_ROOT / "pipeline_runs",
     "LAYER_NAME": "layer0",
@@ -91,8 +91,9 @@ EDITOR_RUN_CONFIG: Dict[str, Any] = {
     # "standard": 当前稳定保底流程，repair_fig.png -> NewParams -> VTracer -> JSON。
     # "optimized_bs_seed": 上一版实验流程，repair_fig.png -> optimized_bs -> VTracer seed -> JSON。
     # "geometry_primitives": 新几何驱动流程，B-spline 只做中间层，最终输出 line/arc/spline primitives。
+    # "graph_local_lines": graph-local 拓扑流程，但最终只输出 line primitives。
     #"PARAMETERIZATION_MODE": "standard",
-    "PARAMETERIZATION_MODE": "graph_local_primitives",
+    "PARAMETERIZATION_MODE": "graph_local_lines",
     "REUSE_PROJECT_FOLDER": False,
     "REUSE_PROJECT_NAME": False,
 }
@@ -142,10 +143,10 @@ class FSSParameterizedCSTPipeline:
         self.skip_fss_cleanup = bool(skip_fss_cleanup)
         self.honor_instance_skip = bool(honor_instance_skip)
         self.parameterization_mode = str(parameterization_mode).lower().strip()
-        if self.parameterization_mode not in ("standard", "optimized_bs_seed", "geometry_primitives", "graph_local_primitives"):
+        if self.parameterization_mode not in ("standard", "optimized_bs_seed", "geometry_primitives", "graph_local_primitives", "graph_local_lines"):
             raise ValueError(
                 "parameterization_mode must be one of: 'standard', 'optimized_bs_seed', "
-                "'geometry_primitives', 'graph_local_primitives'."
+                "'geometry_primitives', 'graph_local_primitives', 'graph_local_lines'."
             )
         self.reuse_project_folder = bool(reuse_project_folder)
         self.reuse_project_name = bool(reuse_project_name)
@@ -192,10 +193,15 @@ class FSSParameterizedCSTPipeline:
         actual_parameterization_mode = self.parameterization_mode
         parameterization_status: Dict[str, Any] = {}
         try:
-            if self.parameterization_mode == "graph_local_primitives":
-                parameter_json_path, parameterization_status = self._parameterize_repair_image_via_graph_local_primitives(repair_path)
+            if self.parameterization_mode in {"graph_local_primitives", "graph_local_lines"}:
+                parameter_json_path, parameterization_status = self._parameterize_repair_image_via_graph_local_primitives(
+                    repair_path,
+                    force_line_primitives=self.parameterization_mode == "graph_local_lines",
+                )
                 if parameterization_status.get("fallback"):
-                    actual_parameterization_mode = "graph_local_primitives_internal_fallback"
+                    if self.parameterization_mode == "graph_local_lines":
+                        raise ValueError("graph_local_lines does not allow fallback to non-line parameterization")
+                    actual_parameterization_mode = f"{self.parameterization_mode}_internal_fallback"
             elif self.parameterization_mode == "geometry_primitives":
                 parameter_json_path, parameterization_status = self._parameterize_repair_image_via_geometry_primitives(repair_path)
                 if parameterization_status.get("fallback"):
@@ -212,19 +218,21 @@ class FSSParameterizedCSTPipeline:
                 "experimental parameterization failed; "
                 f"error={exc}"
             )
-            if self.parameterization_mode == "graph_local_primitives":
-                self._log("fallback chain: graph_local_primitives -> geometry_primitives")
+            if self.parameterization_mode in {"graph_local_primitives", "graph_local_lines"}:
+                if self.parameterization_mode == "graph_local_lines":
+                    raise
+                self._log(f"fallback chain: {self.parameterization_mode} -> geometry_primitives")
                 try:
                     parameter_json_path, parameterization_status = self._parameterize_repair_image_via_geometry_primitives(repair_path)
-                    actual_parameterization_mode = "graph_local_primitives_geometry_primitives_fallback"
+                    actual_parameterization_mode = f"{self.parameterization_mode}_geometry_primitives_fallback"
                     if parameterization_status.get("fallback"):
-                        actual_parameterization_mode = "graph_local_primitives_geometry_primitives_standard_topology_fallback"
+                        actual_parameterization_mode = f"{self.parameterization_mode}_geometry_primitives_standard_topology_fallback"
                 except Exception as second_exc:
                     self._log(
                         "geometry_primitives fallback failed; "
                         f"fallback to standard pipeline. error={second_exc}"
                     )
-                    actual_parameterization_mode = "graph_local_primitives_standard_fallback"
+                    actual_parameterization_mode = f"{self.parameterization_mode}_standard_fallback"
                     parameter_json_path = self._parameterize_repair_image(repair_path)
             else:
                 self._log("fallback to standard pipeline.")
@@ -438,13 +446,18 @@ class FSSParameterizedCSTPipeline:
         self._log(f"visualization: {visual_path}")
         return json_path
 
-    def _parameterize_repair_image_via_graph_local_primitives(self, repair_path: Path) -> tuple[Path, Dict[str, Any]]:
+    def _parameterize_repair_image_via_graph_local_primitives(
+        self,
+        repair_path: Path,
+        force_line_primitives: bool = False,
+    ) -> tuple[Path, Dict[str, Any]]:
         """Run topology-aware graph local primitive parameterization."""
         from bayesian_optimization.geometry.geometry_graph_parameterizer import GraphBasedLocalSplineParameterizer
 
         parameterizer = GraphBasedLocalSplineParameterizer(
             image_path=repair_path,
             save_dir=self.param_dir,
+            force_line_primitives=force_line_primitives,
             line_tolerance_px=1.6,
             arc_tolerance_px=1.5,
             residual_spline_tolerance_px=2.2,
@@ -473,10 +486,11 @@ class FSSParameterizedCSTPipeline:
         )
         json_path = parameterizer.run()
         status = getattr(parameterizer, "last_status", {})
-        self._log(f"graph_local_primitives json: {json_path}")
+        mode_name = "graph_local_lines" if force_line_primitives else "graph_local_primitives"
+        self._log(f"{mode_name} json: {json_path}")
         if status.get("fallback"):
             self._log(
-                "graph_local_primitives fallback: "
+                f"{mode_name} fallback: "
                 f"{status.get('fallback_reason', '')}"
             )
         return json_path, status
@@ -1185,9 +1199,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--parameterization-mode",
-        choices=["standard", "optimized_bs_seed", "geometry_primitives", "graph_local_primitives"],
+        choices=["standard", "optimized_bs_seed", "geometry_primitives", "graph_local_primitives", "graph_local_lines"],
         default="standard",
-        help="Choose standard NewParams, optimized_bs seed, geometry-driven, or graph-local primitive flow.",
+        help="Choose standard NewParams, optimized_bs seed, geometry-driven, graph-local primitive, or graph-local line-only flow.",
     )
     parser.add_argument(
         "--skip-fss-cleanup",

@@ -30,7 +30,10 @@ from bayesian_optimization.geometry.junction_constraint_manager import (
     validate_junctions,
     write_junction_validation,
 )
-from bayesian_optimization.geometry.primitive_analyzer import analyze_primitives
+from bayesian_optimization.geometry.primitive_analyzer import (
+    DEFAULT_CURVE_PARAMETERIZATION_MODE,
+    analyze_primitives,
+)
 from bayesian_optimization.geometry.primitive_variable_generator import generate_primitive_variables
 from bayesian_optimization.geometry.shape_regularizer import (
     plot_curvature_change_map,
@@ -90,6 +93,7 @@ class PrimitiveInventory:
 def extract_design_variables(
     payload: Dict[str, Any],
     port_summary: Optional[Dict[str, Any]] = None,
+    curve_parameterization_mode: str = DEFAULT_CURVE_PARAMETERIZATION_MODE,
 ) -> Tuple[List[DesignVariable], PrimitiveInventory]:
     # 【关键函数】优先提取控制点 offset 变量；失败时回退到 global_scale。
     """从 primitive 层提取优化安全变量。
@@ -117,7 +121,11 @@ def extract_design_variables(
 
     deformation_plan = None
     try:
-        primitive_analysis = analyze_primitives(payload, port_summary=port_summary)
+        primitive_analysis = analyze_primitives(
+            payload,
+            port_summary=port_summary,
+            curve_parameterization_mode=curve_parameterization_mode,
+        )
         primitive_variables = generate_primitive_variables(primitive_analysis)
         if primitive_variables:
             primitive_summary = primitive_analysis.get("summary", {}) or {}
@@ -139,6 +147,7 @@ def extract_design_variables(
                 "line_normal_offsets_only": True,
                 "raw_sampled_points_optimized": False,
                 "single_control_point_offsets_enabled": False,
+                "curve_parameterization_mode": primitive_summary.get("curve_parameterization_mode", curve_parameterization_mode),
             }
             inventory = PrimitiveInventory(
                 line_count=int(primitive_summary.get("line_count", line_count)),
@@ -212,6 +221,7 @@ def mutate_geometry(
     output_dir: Optional[Path] = None,
     iteration: int = 0,
     port_summary: Optional[Dict[str, Any]] = None,
+    curve_parameterization_mode: str = DEFAULT_CURVE_PARAMETERIZATION_MODE,
 ) -> Dict[str, Any]:
     # 【关键函数】把 BO 采样值应用到几何 JSON，供后续 validation/CST 使用。
     """按优化变量生成新的几何 JSON。
@@ -222,7 +232,11 @@ def mutate_geometry(
 
     mutated = copy.deepcopy(payload)
     if inventory is None:
-        _, inventory = extract_design_variables(payload, port_summary=port_summary)
+        _, inventory = extract_design_variables(
+            payload,
+            port_summary=port_summary,
+            curve_parameterization_mode=curve_parameterization_mode,
+        )
 
     if inventory.deformation_plan and inventory.deformation_plan.get("mode") == "primitive_aware_shape_optimization":
         mutated, primitive_report = apply_primitive_aware_mutation(
@@ -233,6 +247,7 @@ def mutate_geometry(
             output_dir=output_dir,
             iteration=iteration,
             port_summary=port_summary,
+            curve_parameterization_mode=curve_parameterization_mode,
         )
         metadata = mutated.setdefault("optimization_metadata", {})
         metadata["mutation"] = {
@@ -298,6 +313,7 @@ def apply_primitive_aware_mutation(
     output_dir: Optional[Path] = None,
     iteration: int = 0,
     port_summary: Optional[Dict[str, Any]] = None,
+    curve_parameterization_mode: str = DEFAULT_CURVE_PARAMETERIZATION_MODE,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Apply primitive-aware mutation and engineering constraints.
 
@@ -309,7 +325,13 @@ def apply_primitive_aware_mutation(
     """
 
     output_path = Path(output_dir) if output_dir is not None else None
-    analysis = analyze_primitives(original, output_path, port_summary=port_summary)
+    plan_curve_mode = str(deformation_plan.get("curve_parameterization_mode") or curve_parameterization_mode)
+    analysis = analyze_primitives(
+        original,
+        output_path,
+        port_summary=port_summary,
+        curve_parameterization_mode=plan_curve_mode,
+    )
     variable_defs = deformation_plan.get("variables") or generate_primitive_variables(analysis)
     variables_by_name = {variable.get("name"): variable for variable in variable_defs}
     primitive_by_id = {primitive.get("primitive_id"): primitive for primitive in analysis.get("primitives", []) or []}
