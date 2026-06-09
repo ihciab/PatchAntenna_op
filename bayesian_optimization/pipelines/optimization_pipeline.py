@@ -39,6 +39,7 @@ if VERSIONED_LOCAL_PACKAGES_DIR.exists():
         sys.path.append(local_packages_text)
 
 MAX_ALLOWED_EVALUATIONS = 30
+from bayesian_optimization.geometry.primitive_analyzer import DEFAULT_CURVE_PARAMETERIZATION_MODE  # noqa: E402
 
 
 # ============================================================================
@@ -52,7 +53,7 @@ MAX_ALLOWED_EVALUATIONS = 30
 #    如果要看谐振频率和 S11 优化结果，必须设置 BUILD_ONLY=False。
 EDITOR_RUN_CONFIG: Dict[str, Any] = {
     "RUN_WITH_EDITOR_CONFIG": True,
-    "BASE_RUN_DIR": PROJECT_ROOT / "pipeline_runs" / "run_20260528_213238",
+    "BASE_RUN_DIR": PROJECT_ROOT / "pipeline_runs" / "run_20260609_141242",
     "INSTANCE_JSON_PATH": PROJECT_ROOT / "pipeline_test_instance.json",
     "OUTPUT_ROOT": PROJECT_ROOT / "optimization_runs",
     "RUN_NAME": "bo_editor_full30_213238",
@@ -84,7 +85,6 @@ from bayesian_optimization.geometry.geometry_validator import (  # noqa: E402
 )
 from bayesian_optimization.geometry.geometry_validation import validate_geometry as validate_and_repair_cst_geometry  # noqa: E402
 from bayesian_optimization.geometry.primitive_mutator import (  # noqa: E402
-    DEFAULT_CURVE_PARAMETERIZATION_MODE,
     DesignVariable,
     PrimitiveInventory,
     extract_design_variables,
@@ -1069,8 +1069,9 @@ class OptimizationPipeline:
         ax.plot(evaluations, objectives, color="#111827", linewidth=1.2, alpha=0.6)
         ax.scatter(evaluations, objectives, c=colors, s=48)
         ax.set_xlabel("Evaluation")
-        ax.set_ylabel("Objective")
-        ax.set_title("Optimization Objective History")
+        ax.set_ylabel("Weighted Normalized Error")
+        ax.set_title("Objective Function History")
+        ax.ticklabel_format(axis="y", useOffset=False)
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
         fig.savefig(self.state.plots_dir / "objective_history.png", dpi=180)
@@ -1081,8 +1082,9 @@ class OptimizationPipeline:
         fig, ax = plt.subplots(figsize=(8, 4.8))
         ax.scatter(primary_variable_values, objectives, c=colors, s=52)
         ax.set_xlabel(primary_variable_name)
-        ax.set_ylabel("Objective")
-        ax.set_title("Design Variable vs Objective")
+        ax.set_ylabel("Weighted Normalized Error")
+        ax.set_title("Design Variable vs Objective Function")
+        ax.ticklabel_format(axis="y", useOffset=False)
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
         fig.savefig(self.state.plots_dir / "variable_objective.png", dpi=180)
@@ -1129,6 +1131,7 @@ class OptimizationPipeline:
             axes[1].plot(resonance_evaluations, min_s11_values, marker="o", color="#7c3aed", linewidth=1.6)
             axes[1].set_xlabel("Evaluation")
             axes[1].set_ylabel("Minimum S11 (dB)")
+            axes[1].ticklabel_format(axis="y", useOffset=False)
             axes[1].grid(True, alpha=0.3)
             fig.tight_layout()
             fig.savefig(self.state.plots_dir / "resonance_history.png", dpi=180)
@@ -1152,6 +1155,7 @@ class OptimizationPipeline:
         ax.axvline(self.config.target_frequency_ghz, color="#111827", linestyle="--", linewidth=1.0)
         ax.set_xlabel("Frequency (GHz)")
         ax.set_ylabel("S11 (dB)")
+        ax.ticklabel_format(axis="y", useOffset=False)
         ax.set_title("Best S11 Curve")
         ax.grid(True, alpha=0.3)
         fig.tight_layout()

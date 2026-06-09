@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import csv
 import math
 import re
@@ -58,7 +59,9 @@ def read_s11_rows(path: Path) -> List[Point]:
         raise FileNotFoundError(f"S11 文件不存在: {path}")
     text = path.read_text(encoding="utf-8-sig", errors="ignore")
 
-    rows = _read_csv_like(text)
+    rows = _read_python_tuple_series(text)
+    if not rows:
+        rows = _read_csv_like(text)
     if not rows:
         rows = _read_regex_pairs(text)
     rows = [(freq, value) for freq, value in rows if math.isfinite(freq) and math.isfinite(value)]
@@ -116,6 +119,51 @@ def bandwidth_edges_below_threshold(
     if not below:
         return None, None
     return min(below), max(below)
+
+
+def _read_python_tuple_series(text: str) -> List[Point]:
+    """Read CST exports shaped like [(freq, complex_s11, impedance), ...].
+
+    In this format the second item is complex S11, not dB. The parser converts
+    it to dB using 20*log10(abs(S11)) before objective evaluation and plotting.
+    """
+
+    stripped = text.strip()
+    if not stripped.startswith("["):
+        return []
+    try:
+        items = ast.literal_eval(stripped)
+    except (SyntaxError, ValueError):
+        return []
+    if not isinstance(items, list):
+        return []
+
+    rows: List[Point] = []
+    for item in items:
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        try:
+            freq = float(item[0])
+        except (TypeError, ValueError):
+            continue
+        value = _s11_value_to_db(item[1])
+        if value is not None:
+            rows.append((freq, value))
+    return rows
+
+
+def _s11_value_to_db(value: object) -> Optional[float]:
+    """Convert a raw S11 value to dB when complex, or pass scalar dB through."""
+
+    if isinstance(value, complex):
+        magnitude = abs(value)
+        if magnitude <= 0.0:
+            return -math.inf
+        return 20.0 * math.log10(magnitude)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _read_csv_like(text: str) -> List[Point]:
