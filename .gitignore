@@ -11,6 +11,7 @@ clean_parametric_eval_output/
 models/
 
 # Generated outputs
+runs/
 optimization_runs/
 pipeline_runs/
 results/

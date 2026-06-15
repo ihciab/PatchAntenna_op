@@ -379,10 +379,13 @@ def apply_primitive_aware_mutation(
         elif variable_type in {"curve_smooth_offset", "primitive_smooth_offset"}:
             apply_curve_mutation(mutated, primitive, sampled_value, mutation_report)
 
+    sync_closed_component_point_sequences(mutated)
     update_component_bboxes(mutated)
     graph = build_junction_graph(original, analysis, tolerance=1.0)
     sync_report = synchronize_junctions(mutated, graph, analysis)
     sync_line_counterparts(mutated, analysis)
+    sync_closed_component_point_sequences(mutated)
+    update_component_bboxes(mutated)
     junction_report = validate_junctions(mutated, graph, analysis, tolerance=1.0)
     mutation_report["junction_fixed"] = sync_report.get("junction_fixed", [])
     mutation_report["junction_validation"] = junction_report
@@ -889,6 +892,47 @@ def update_component_bboxes(payload: Dict[str, Any]) -> None:
         points = parse_points(component.get("resampled_points") or component.get("fallback_points") or component.get("points"))
         if points:
             component["bbox"] = list(point_bbox(points))
+
+
+def sync_closed_component_point_sequences(payload: Dict[str, Any], tolerance: float = 1e-7) -> None:
+    """Keep cached point arrays explicitly closed for closed components.
+
+    Input: mutable parameterization payload.
+    Output: in-place update of resampled/fallback point arrays.
+    Algorithm purpose: candidate mutations may move the duplicated closure
+    endpoint independently from the first point; optimization validators read
+    these cached arrays directly, so closed loops must keep last == first.
+    """
+
+    for component in payload.get("components", []) or []:
+        if not bool(component.get("closed", False)):
+            continue
+        for key in ("resampled_points", "fallback_points", "sampled_points", "points"):
+            values = component.get(key)
+            if not isinstance(values, list) or len(values) < 3:
+                continue
+            first = values[0]
+            last = values[-1]
+            if not is_point(first):
+                continue
+            segment_count = len(component.get("segments") or component.get("primitives") or [])
+            explicit_closure_length = segment_count > 0 and len(values) == segment_count + 1
+            if explicit_closure_length:
+                values[-1] = [float(first[0]), float(first[1])]
+            elif not is_point(last) or point_distance_2d(first, last) > tolerance:
+                values.append([float(first[0]), float(first[1])])
+            else:
+                values[-1] = [float(first[0]), float(first[1])]
+        points = parse_points(component.get("resampled_points") or component.get("fallback_points") or component.get("points"))
+        if points:
+            component["sampled_point_count"] = len(points)
+            metrics = component.get("metrics")
+            if isinstance(metrics, dict):
+                metrics["sampled_point_count"] = len(points)
+
+
+def point_distance_2d(a: Sequence[float], b: Sequence[float]) -> float:
+    return math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1]))
 
 
 def build_port_constraint_report(analysis: Dict[str, Any], variable_values: Dict[str, float]) -> Dict[str, Any]:

@@ -53,8 +53,8 @@ from bayesian_optimization.geometry.primitive_analyzer import DEFAULT_CURVE_PARA
 #    如果要看谐振频率和 S11 优化结果，必须设置 BUILD_ONLY=False。
 EDITOR_RUN_CONFIG: Dict[str, Any] = {
     "RUN_WITH_EDITOR_CONFIG": True,
-    "BASE_RUN_DIR": PROJECT_ROOT / "pipeline_runs" / "run_20260609_141242",
-    "INSTANCE_JSON_PATH": PROJECT_ROOT / "pipeline_test_instance.json",
+    "BASE_RUN_DIR": PROJECT_ROOT / "pipeline_runs" / "run_20260609_181608",
+    "INSTANCE_JSON_PATH": PROJECT_ROOT / "pipeline_test_instance2.json",
     "OUTPUT_ROOT": PROJECT_ROOT / "optimization_runs",
     "RUN_NAME": "bo_editor_full30_213238",
     "LAYER_NAME": "layer0",
@@ -84,6 +84,7 @@ from bayesian_optimization.geometry.geometry_validator import (  # noqa: E402
     validate_geometry,
 )
 from bayesian_optimization.geometry.geometry_validation import validate_geometry as validate_and_repair_cst_geometry  # noqa: E402
+from bayesian_optimization.geometry.port_summary_utils import ensure_port_summary_connected_to_geometry  # noqa: E402
 from bayesian_optimization.geometry.primitive_mutator import (  # noqa: E402
     DesignVariable,
     PrimitiveInventory,
@@ -310,6 +311,8 @@ class SkoptBackend:
                 self._real_cls(variable.lower, variable.upper, name=variable.name)
                 for variable in variables
             ]
+
+#--------------------------------------------------------------------------------------------------------------------------------------
             self.optimizer = self._optimizer_cls(
                 dimensions=dimensions,
                 base_estimator="GP",
@@ -366,6 +369,10 @@ class OptimizationConfig:
     curve_parameterization_mode: str = DEFAULT_CURVE_PARAMETERIZATION_MODE
     random_state: int = 42
     optimizer_backend: str = "auto"
+    port_connection_step_px: float = 0.2
+    port_connection_tolerance_px: float = 0.15
+    port_connection_max_shift_px: float = 120.0
+    port_connection_final_free_normal_inward_px: float = 2.0
 
 
 @dataclass
@@ -564,6 +571,8 @@ class OptimizationPipeline:
             logger.info("设计变量: %s", [variable.to_dict() for variable in self.variables])
             logger.info("primitive inventory: %s", self.inventory.to_dict())
 
+            self._evaluate_initial_design()
+
             no_improvement_count = 0
             consecutive_cst_failures = 0
             best_objective = None
@@ -607,7 +616,38 @@ class OptimizationPipeline:
         finally:
             close_logger(logger)
 
-    def evaluate(self, evaluation: int, variables: Dict[str, float]) -> EvaluationRecord:
+    def _evaluate_initial_design(self) -> Optional[EvaluationRecord]:
+        """Evaluate and store the unperturbed initial design as S11 baseline.
+
+        The baseline is not a BO trial: it is not appended to optimization
+        history and is not sent to the optimizer. It exists only as a fixed
+        reference curve for plots such as plots/best_s11_curve.png.
+        """
+
+        initial_dir = self.state.valid_designs_dir / "initial_design"
+        if (initial_dir / "initial_design_record.json").exists():
+            return None
+
+        default_values = {variable.name: float(variable.default) for variable in self.variables}
+        self.state.logger.info("evaluating initial design S11 baseline")
+        record = self.evaluate(
+            evaluation=0,
+            variables=default_values,
+            output_dir_name="initial_design",
+            append_history=False,
+        )
+        write_json(initial_dir / "initial_design_record.json", record.to_dict())
+        if record.s11_metrics:
+            write_json(initial_dir / "initial_s11_metrics.json", record.s11_metrics)
+        return record
+
+    def evaluate(
+        self,
+        evaluation: int,
+        variables: Dict[str, float],
+        output_dir_name: Optional[str] = None,
+        append_history: bool = True,
+    ) -> EvaluationRecord:
         """【关键函数】执行单轮 evaluation。
 
         单轮流程：mutate -> validation -> CST build/simulation -> S11 parse -> objective。
@@ -617,7 +657,8 @@ class OptimizationPipeline:
         start = time.perf_counter()
         logger.info("evaluation=%03d variables=%s", evaluation, variables)
 
-        eval_dir = self.state.valid_designs_dir / f"eval_{evaluation:03d}"
+        record_name = output_dir_name or f"eval_{evaluation:03d}"
+        eval_dir = self.state.valid_designs_dir / record_name
         eval_dir.mkdir(parents=True, exist_ok=True)
         mutated = mutate_geometry(
             self.payload,
@@ -660,8 +701,8 @@ class OptimizationPipeline:
                 )
 
         if not validation.valid:
-            design_path = self.state.invalid_designs_dir / f"eval_{evaluation:03d}.json"
-            report_path = self.state.invalid_designs_dir / f"eval_{evaluation:03d}_validation.json"
+            design_path = self.state.invalid_designs_dir / f"{record_name}.json"
+            report_path = self.state.invalid_designs_dir / f"{record_name}_validation.json"
             write_json(design_path, mutated)
             write_json(report_path, validation.to_dict())
             objective = evaluate_objective(
@@ -673,7 +714,7 @@ class OptimizationPipeline:
                 self.objective_weights,
             )
             write_json(
-                self.state.invalid_designs_dir / f"eval_{evaluation:03d}_objective_breakdown.json",
+                self.state.invalid_designs_dir / f"{record_name}_objective_breakdown.json",
                 objective.to_dict(),
             )
             record = EvaluationRecord(
@@ -688,7 +729,8 @@ class OptimizationPipeline:
                 error_message="; ".join(validation.reasons),
                 elapsed_seconds=time.perf_counter() - start,
             )
-            self.state.history.append(record)
+            if append_history:
+                self.state.history.append(record)
             logger.warning("rejected invalid geometry eval=%03d reasons=%s", evaluation, validation.reasons)
             return record
 
@@ -709,6 +751,29 @@ class OptimizationPipeline:
             output_dir=eval_dir,
             logger=logger,
         )
+        port_summary_for_eval = self.config.port_summary
+        connected_port_summary_path = None
+        if self.port_summary is not None:
+            connected_port_summary, port_connection_report = ensure_port_summary_connected_to_geometry(
+                repaired_payload,
+                self.port_summary,
+                step_px=self.config.port_connection_step_px,
+                tolerance_px=self.config.port_connection_tolerance_px,
+                max_shift_px=self.config.port_connection_max_shift_px,
+                final_free_normal_inward_px=self.config.port_connection_final_free_normal_inward_px,
+            )
+            write_json(eval_dir / "port_connection_report.json", port_connection_report)
+            metadata = repaired_payload.setdefault("optimization_metadata", {})
+            metadata["port_connection"] = port_connection_report
+            if connected_port_summary is not None:
+                connected_port_summary_path = eval_dir / "port_summary_connected.json"
+                write_json(connected_port_summary_path, connected_port_summary)
+                port_summary_for_eval = connected_port_summary_path
+            if not bool(port_connection_report.get("connected_after", False)):
+                cst_geometry_report.valid = False
+                cst_geometry_report.errors.append(
+                    "port is not connected to parameterized feedline after inward normal stepping"
+                )
         write_json(design_path, repaired_payload)
         geometry_metrics["cst_robustness_score"] = cst_geometry_report.robustness_score
 
@@ -736,7 +801,8 @@ class OptimizationPipeline:
                 error_message="; ".join(cst_geometry_report.errors),
                 elapsed_seconds=time.perf_counter() - start,
             )
-            self.state.history.append(record)
+            if append_history:
+                self.state.history.append(record)
             logger.warning(
                 "rejected before CST eval=%03d geometry errors=%s",
                 evaluation,
@@ -749,7 +815,7 @@ class OptimizationPipeline:
         cst_failed = False
         error_message = None
         try:
-            cst_project = self._build_and_simulate(design_path, eval_dir)
+            cst_project = self._build_and_simulate(design_path, eval_dir, port_summary_path=port_summary_for_eval)
             if self.config.run_solver:
                 s11_path = find_latest_s11_file(eval_dir)
                 s11_metrics = parse_s11_file(s11_path, target_frequency_ghz=self.config.target_frequency_ghz)
@@ -791,7 +857,8 @@ class OptimizationPipeline:
             error_message=error_message,
             elapsed_seconds=time.perf_counter() - start,
         )
-        self.state.history.append(record)
+        if append_history:
+            self.state.history.append(record)
         logger.info(
             "evaluation=%03d status=%s objective=%.6f elapsed=%.2fs",
             evaluation,
@@ -801,7 +868,12 @@ class OptimizationPipeline:
         )
         return record
 
-    def _build_and_simulate(self, design_json: Path, eval_dir: Path) -> Path:
+    def _build_and_simulate(
+        self,
+        design_json: Path,
+        eval_dir: Path,
+        port_summary_path: Optional[Path] = None,
+    ) -> Path:
         """调用已有 ParameterizedJsonCSTBuilder 完成 CST 建模和可选仿真。"""
         from bayesian_optimization.simulation.parameterized_json_to_cst import (
             CSTParametricConfig,
@@ -818,7 +890,7 @@ class OptimizationPipeline:
         unique_suffix = _datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         cst_config.project_name = f"optimization_eval_{design_json.parent.name}_{unique_suffix}"
         cst_config.run_solver = bool(self.config.run_solver)
-        cst_config.port_summary_path = self.config.port_summary
+        cst_config.port_summary_path = port_summary_path if port_summary_path is not None else self.config.port_summary
         cst_config.simplify_tolerance_px = self.config.simplify_tolerance_px
         cst_config.geometry_frame = self.config.geometry_frame
         cst_config.close_project = True
@@ -1021,6 +1093,19 @@ class OptimizationPipeline:
                     "allow_feedline_port_corridor": self.validation_config.allow_feedline_port_corridor_clearance,
                     "action": "reject_non_port_geometry_before_cst",
                 },
+                "port_connection_policy": {
+                    "enabled": self.config.port_summary is not None,
+                    "action": "shift_port_inward_until_parameterized_curve_contact_before_cst",
+                    "step_px": self.config.port_connection_step_px,
+                    "tolerance_px": self.config.port_connection_tolerance_px,
+                    "max_shift_px": self.config.port_connection_max_shift_px,
+                    "final_free_normal_inward_px": self.config.port_connection_final_free_normal_inward_px,
+                    "failure_action": "reject_before_cst",
+                    "per_evaluation_outputs": [
+                        "port_connection_report.json",
+                        "port_summary_connected.json",
+                    ],
+                },
             },
             "design_variables": [variable.to_dict() for variable in self.variables],
             "primitive_inventory": self.inventory.to_dict(),
@@ -1147,20 +1232,61 @@ class OptimizationPipeline:
         best = min(s11_records, key=lambda item: float(item.objective or 1e9))
         from bayesian_optimization.optimization.s11_parser import read_s11_rows
 
-        rows = read_s11_rows(Path(best.s11_metrics["s11_path"]))
+        best_s11_path = Path(best.s11_metrics["s11_path"])
+        rows = read_s11_rows(best_s11_path)
         if not rows:
             return
+        initial_s11_path = self._initial_s11_path()
+        initial_rows = read_s11_rows(initial_s11_path) if initial_s11_path is not None else []
+
         fig, ax = plt.subplots(figsize=(8, 4.8))
-        ax.plot([row[0] for row in rows], [row[1] for row in rows], color="#7c3aed", linewidth=1.5)
+        if initial_rows:
+            ax.plot(
+                [row[0] for row in initial_rows],
+                [row[1] for row in initial_rows],
+                color="#6b7280",
+                linestyle="--",
+                linewidth=1.3,
+                label="Initial design",
+            )
+        ax.plot(
+            [row[0] for row in rows],
+            [row[1] for row in rows],
+            color="#7c3aed",
+            linewidth=1.6,
+            label=f"Best eval {best.evaluation:03d}",
+        )
         ax.axvline(self.config.target_frequency_ghz, color="#111827", linestyle="--", linewidth=1.0)
         ax.set_xlabel("Frequency (GHz)")
         ax.set_ylabel("S11 (dB)")
         ax.ticklabel_format(axis="y", useOffset=False)
-        ax.set_title("Best S11 Curve")
+        ax.set_title("Initial vs Best S11 Curve")
+        ax.legend(loc="best", fontsize=8)
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
         fig.savefig(self.state.plots_dir / "best_s11_curve.png", dpi=180)
         plt.close(fig)
+        write_json(
+            self.state.plots_dir / "s11_curve_comparison.json",
+            {
+                "initial_s11_path": str(initial_s11_path) if initial_s11_path else None,
+                "best_s11_path": str(best_s11_path),
+                "best_evaluation": best.evaluation,
+                "best_objective": best.objective,
+                "target_frequency_ghz": self.config.target_frequency_ghz,
+            },
+        )
+
+    def _initial_s11_path(self) -> Optional[Path]:
+        """Return the stored initial-design S11 file when it exists."""
+
+        initial_dir = self.state.valid_designs_dir / "initial_design"
+        if not initial_dir.exists():
+            return None
+        try:
+            return find_latest_s11_file(initial_dir)
+        except FileNotFoundError:
+            return None
 
     def _save_optimizer_importance_plot(self, plt: Any) -> None:
         """保存优化器自身提供的参数重要性图。"""
@@ -1198,6 +1324,8 @@ class OptimizationPipeline:
                     "normalized_errors": dict(normalized),
                     "weighted_terms": {
                         "resonance": float(breakdown.get("primary_frequency_error", 0.0)),
+                        "resonance_count": float(breakdown.get("resonance_count_penalty", 0.0)),
+                        "bandwidth": float(breakdown.get("bandwidth_reward", 0.0)),
                         "bandwidth_edges": float(breakdown.get("bandwidth_reward", 0.0)),
                         "s11": float(breakdown.get("target_s11_penalty", 0.0)),
                         "gain": float(breakdown.get("gain_penalty", 0.0)),
@@ -1212,13 +1340,16 @@ class OptimizationPipeline:
         evaluations = [int(row["evaluation"]) for row in rows]
         error_keys = [
             ("resonance", "E_res"),
+            ("resonance_count", "E_mode_count"),
             ("bandwidth_edges", "E_edge"),
+            ("bandwidth_width_shortfall", "E_bw_shortfall"),
             ("s11", "E_s11"),
             ("gain", "E_gain"),
         ]
         weighted_keys = [
             ("resonance", "w_res*E_res"),
-            ("bandwidth_edges", "w_bw*E_edge"),
+            ("resonance_count", "w_count*E_mode_count"),
+            ("bandwidth", "w_bw*E_bw"),
             ("s11", "w_s11*E_s11"),
             ("gain", "w_gain*E_gain"),
         ]

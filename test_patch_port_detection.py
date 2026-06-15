@@ -320,3 +320,55 @@ def test_cst_builder_snaps_patch_port_to_reconstructed_feed_terminal(tmp_path: P
     _, command = builder.modeler.history[0]
     assert '.Orientation "ymin"' in command
     assert '.Yrange "-13.0909091", "-13.0909091"' in command
+
+
+def test_cst_builder_uses_bo_port_connection_adjustment_without_resnapping(tmp_path: Path) -> None:
+    builder = ParameterizedJsonCSTBuilder.__new__(ParameterizedJsonCSTBuilder)
+    builder.config = CSTParametricConfig(project_folder=tmp_path, run_solver=False)
+    builder.payload = {
+        "components": [
+            {
+                "resampled_points": [
+                    [100.0, 120.0],
+                    [100.0, 150.0],
+                    [105.0, 170.0],
+                    [110.0, 170.0],
+                    [115.0, 170.0],
+                ]
+            }
+        ]
+    }
+    builder.modeler = type(
+        "DummyModeler",
+        (),
+        {
+            "__init__": lambda self: setattr(self, "history", []),
+            "add_to_history": lambda self, name, command: self.history.append((name, command)),
+        },
+    )()
+
+    ports = {
+        "bo_port_connection_adjustment": {
+            "connected_point": [110.0, 171.9],
+            "final_free_normal_inward_px": 2.0,
+        },
+        "patch_port_detection": {
+            "ports": [
+                {
+                    "point": [110, 179],
+                    "direction": "bottom",
+                    "local_width": 18.0,
+                    "connected_to_main_patch": True,
+                    "score": 13.0,
+                    "confidence": 1.0,
+                }
+            ]
+        },
+    }
+
+    used = builder._add_patch_topology_port_if_available(ports, (0.0, 0.0, 220.0, 180.0))
+
+    assert used
+    _, command = builder.modeler.history[0]
+    assert '.Orientation "ymin"' in command
+    assert '.Yrange "-13.0745455", "-13.0745455"' in command

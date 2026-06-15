@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 from bayesian_optimization.optimization.s11_parser import S11Metrics
 
@@ -21,6 +21,8 @@ class ObjectiveTargets:
     bandwidth_end_ghz: Optional[float]
     gain_dbi: Optional[float]
     s11_db: float
+    resonance_count: Optional[int] = None
+    resonance_frequencies_ghz: tuple[float, ...] = field(default_factory=tuple)
     antenna_type: Dict[str, Any] = field(default_factory=dict)
     source: str = "fallback"
 
@@ -61,24 +63,35 @@ class WidebandPatchObjective:
         """Evaluate normalized relative errors against paper targets."""
 
         actual_gain = _extract_actual_gain(geometry_metrics)
+        target_resonances = self.targets.resonance_frequencies_ghz
+        qualified_actual_resonances = tuple(
+            float(value)
+            for value in getattr(s11_metrics, "resonant_frequencies_ghz", ())
+            if value is not None
+        )
+        actual_resonances = qualified_actual_resonances
+        if not actual_resonances:
+            actual_resonances = (float(s11_metrics.resonant_frequency_ghz),)
 
         # Normalized relative error: abs(actual - target) / max(abs(target), epsilon).
         # A target resonance of 0.0 means the paper parser did not extract a
         # usable resonance, so the resonance loss should not steer BO.
-        e_res = (
-            normalized_relative_error(
-                s11_metrics.resonant_frequency_ghz,
-                self.targets.resonance_ghz,
-            )
-            if self.targets.resonance_ghz is not None
-            else None
+        e_res = multi_resonance_error_optional(actual_resonances, target_resonances)
+        e_res_count = resonance_count_error_optional(
+            actual_count=len(qualified_actual_resonances),
+            target_count=self.targets.resonance_count,
         )
-        e_bw = bandwidth_edge_error_optional(
+        e_bw_edges = bandwidth_edge_error_optional(
             simulated_start=s11_metrics.bandwidth_start_ghz,
             simulated_end=s11_metrics.bandwidth_end_ghz,
             target_start=self.targets.bandwidth_start_ghz,
             target_end=self.targets.bandwidth_end_ghz,
         )
+        e_bw_shortfall = bandwidth_shortfall_error_optional(
+            simulated_width=s11_metrics.bandwidth_ghz,
+            target_width=self.targets.bandwidth_ghz,
+        )
+        e_bw = combine_bandwidth_errors(e_bw_edges, e_bw_shortfall)
         if e_bw is None:
             e_bw = normalized_relative_error_optional(
                 s11_metrics.bandwidth_ghz,
@@ -92,13 +105,18 @@ class WidebandPatchObjective:
 
         normalized_errors = {
             "resonance": e_res,
+            "resonance_count": e_res_count,
             "bandwidth": e_bw,
-            "bandwidth_edges": e_bw,
+            "bandwidth_edges": e_bw_edges,
+            "bandwidth_width_shortfall": e_bw_shortfall,
             "gain": e_gain,
             "s11": e_s11,
         }
         weighted_terms = {
             "resonance": float(getattr(weights, "resonance", 0.0)) * (e_res or 0.0),
+            "resonance_count": (
+                float(getattr(weights, "resonance_count", 0.0)) * (e_res_count or 0.0)
+            ),
             "bandwidth": float(getattr(weights, "bandwidth_reward", 0.0)) * (e_bw or 0.0),
             "s11": float(getattr(weights, "target_s11", 0.0)) * e_s11,
             "gain": float(getattr(weights, "gain", 0.0)) * (e_gain or 0.0),
@@ -113,6 +131,9 @@ class WidebandPatchObjective:
             targets=self.targets.to_dict(),
             actuals={
                 "resonance_ghz": float(s11_metrics.resonant_frequency_ghz),
+                "resonance_frequencies_ghz": list(actual_resonances),
+                "qualified_resonance_frequencies_ghz": list(qualified_actual_resonances),
+                "resonance_count": len(qualified_actual_resonances),
                 "bandwidth_ghz": float(s11_metrics.bandwidth_ghz),
                 "bandwidth_start_ghz": s11_metrics.bandwidth_start_ghz,
                 "bandwidth_end_ghz": s11_metrics.bandwidth_end_ghz,
@@ -177,6 +198,8 @@ def create_objective_profile_from_instance(
     if profile_name != WidebandPatchObjective.name:
         targets = ObjectiveTargets(
             resonance_ghz=targets.resonance_ghz,
+            resonance_count=targets.resonance_count,
+            resonance_frequencies_ghz=targets.resonance_frequencies_ghz,
             bandwidth_ghz=targets.bandwidth_ghz,
             bandwidth_start_ghz=targets.bandwidth_start_ghz,
             bandwidth_end_ghz=targets.bandwidth_end_ghz,
@@ -203,20 +226,20 @@ def extract_objective_targets(
     if not isinstance(antenna_type, dict):
         antenna_type = {}
 
-    resonance = _first_positive_number(paper.get("Target_Resonances_GHz"))
-    if resonance is None:
-        legacy_resonance = _number_or_none(paper.get("Target_Resonance_GHz"))
-        if legacy_resonance is not None and legacy_resonance > 0.0:
-            resonance = legacy_resonance
-    if resonance is None and "Target_Resonances_GHz" not in paper and "Target_Resonance_GHz" not in paper:
-        resonance = float(fallback_target_frequency_ghz)
+    resonance_frequencies, resonance = _extract_resonance_targets(
+        paper,
+        fallback_target_frequency_ghz=fallback_target_frequency_ghz,
+    )
+    resonance_count = _extract_resonance_count_target(paper, resonance_frequencies)
 
     bandwidth, bandwidth_start, bandwidth_end = _extract_bandwidth_target(paper)
     gain = _number_or_none(paper.get("Peak_Gain_dBi"))
     s11_target = _extract_s11_target(paper, fallback_target_s11_db)
 
     return ObjectiveTargets(
-        resonance_ghz=float(resonance) if resonance is not None else None,
+        resonance_ghz=resonance,
+        resonance_count=resonance_count,
+        resonance_frequencies_ghz=resonance_frequencies,
         bandwidth_ghz=bandwidth,
         bandwidth_start_ghz=bandwidth_start,
         bandwidth_end_ghz=bandwidth_end,
@@ -282,6 +305,62 @@ def normalized_relative_error_optional(
     return normalized_relative_error(float(actual), float(target), epsilon=epsilon)
 
 
+def multi_resonance_error_optional(
+    actual: Sequence[float],
+    target: Sequence[float],
+    epsilon: float = OBJECTIVE_EPSILON,
+) -> Optional[float]:
+    """Compute an averaged resonance loss for one or more target resonances.
+
+    The target list is the source of truth. When a paper specifies two
+    resonance frequencies, the simulated curve is expected to provide two
+    resonances as well. Missing simulated resonances receive a full penalty of
+    1.0 so BO is steered toward recovering the absent dip.
+    """
+
+    target_values = sorted(
+        float(value)
+        for value in target
+        if value is not None and float(value) > 0.0
+    )
+    if not target_values:
+        return None
+    actual_values = sorted(
+        float(value)
+        for value in actual
+        if value is not None and float(value) > 0.0
+    )
+    errors = []
+    for index, target_value in enumerate(target_values):
+        if index < len(actual_values):
+            errors.append(
+                normalized_relative_error(
+                    actual_values[index],
+                    target_value,
+                    epsilon=epsilon,
+                )
+            )
+        else:
+            errors.append(1.0)
+    return sum(errors) / len(errors)
+
+
+def resonance_count_error_optional(
+    actual_count: int,
+    target_count: Optional[int],
+) -> Optional[float]:
+    """Return a hard loss when the simulated modal count misses the target."""
+
+    if target_count is None or target_count <= 1:
+        return None
+    actual_value = max(0, int(actual_count))
+    target_value = max(1, int(target_count))
+    if actual_value == target_value:
+        return 0.0
+    count_error = abs(actual_value - target_value) / target_value
+    return max(1.0, count_error)
+
+
 def bandwidth_edge_error_optional(
     simulated_start: Optional[float],
     simulated_end: Optional[float],
@@ -316,6 +395,33 @@ def bandwidth_edge_error_optional(
     return low_error + high_error
 
 
+def bandwidth_shortfall_error_optional(
+    simulated_width: Optional[float],
+    target_width: Optional[float],
+    epsilon: float = OBJECTIVE_EPSILON,
+) -> Optional[float]:
+    """Penalize only missing 10 dB bandwidth; wider-than-target is acceptable."""
+
+    if simulated_width is None or target_width is None:
+        return None
+    target_value = float(target_width)
+    if target_value <= 0.0:
+        return None
+    shortfall = max(0.0, target_value - max(0.0, float(simulated_width)))
+    return shortfall / max(abs(target_value), epsilon)
+
+
+def combine_bandwidth_errors(
+    edge_error: Optional[float],
+    shortfall_error: Optional[float],
+) -> Optional[float]:
+    """Combine edge placement and minimum-width requirements into one loss."""
+
+    if edge_error is None and shortfall_error is None:
+        return None
+    return float(edge_error or 0.0) + float(shortfall_error or 0.0)
+
+
 def _extract_bandwidth_target(paper: Dict[str, Any]) -> tuple[Optional[float], Optional[float], Optional[float]]:
     """Extract 10 dB bandwidth width and edge targets from Paper_Performance."""
 
@@ -332,6 +438,44 @@ def _extract_bandwidth_target(paper: Dict[str, Any]) -> tuple[Optional[float], O
             width = abs(float(end) - float(start))
         return width, start, end
     return _number_or_none(paper.get("Bandwidth_GHz")), None, None
+
+
+def _extract_resonance_targets(
+    paper: Dict[str, Any],
+    fallback_target_frequency_ghz: float,
+) -> tuple[tuple[float, ...], Optional[float]]:
+    """Extract one or more paper resonance frequencies.
+
+    `Target_Resonances_GHz` may be a scalar or a list. Explicit non-positive
+    values like `[0.0]` disable the resonance loss instead of falling back.
+    """
+
+    resonance_values = _positive_numbers(paper.get("Target_Resonances_GHz"))
+    if not resonance_values:
+        legacy_resonance = _number_or_none(paper.get("Target_Resonance_GHz"))
+        if legacy_resonance is not None and legacy_resonance > 0.0:
+            resonance_values = (float(legacy_resonance),)
+    if (
+        not resonance_values
+        and "Target_Resonances_GHz" not in paper
+        and "Target_Resonance_GHz" not in paper
+    ):
+        resonance_values = (float(fallback_target_frequency_ghz),)
+    return resonance_values, (resonance_values[0] if resonance_values else None)
+
+
+def _extract_resonance_count_target(
+    paper: Dict[str, Any],
+    resonance_values: Sequence[float],
+) -> Optional[int]:
+    """Extract the intended number of S11 modes when the paper specifies it."""
+
+    explicit_count = _number_or_none(paper.get("Resonance_Count"))
+    if explicit_count is not None and explicit_count > 0.0:
+        return max(1, int(round(explicit_count)))
+    if len(resonance_values) > 1:
+        return len(resonance_values)
+    return None
 
 
 def _extract_s11_target(paper: Dict[str, Any], fallback_target_s11_db: float) -> float:
@@ -373,6 +517,19 @@ def _first_positive_number(value: Any) -> Optional[float]:
         if number is not None and number > 0.0:
             return number
     return None
+
+
+def _positive_numbers(value: Any) -> tuple[float, ...]:
+    """Return all positive numeric values from a scalar or list-like object."""
+
+    values = value if isinstance(value, (list, tuple)) else (value,)
+    numbers = []
+    for item in values:
+        number = _number_or_none(item)
+        if number is not None and number > 0.0:
+            numbers.append(float(number))
+    return tuple(numbers)
+
 
 
 def _number_or_none(value: Any) -> Optional[float]:

@@ -790,6 +790,28 @@ def move_component_point(payload: Dict[str, Any], component_index: int, point_in
             raw = primitive.get(key)
             if isinstance(raw, list) and 0 <= point_index < len(raw):
                 raw[point_index] = move_json_point(raw[point_index], dx, dy)
+    sync_closed_component_points(component)
+
+
+def sync_closed_component_points(component: Dict[str, Any], tolerance: float = 1e-7) -> None:
+    if not bool(component.get("closed", False)):
+        return
+    segment_count = len(component.get("segments") or component.get("primitives") or [])
+    for key in ("resampled_points", "fallback_points", "points", "sampled_points", "smoothed_points"):
+        raw = component.get(key)
+        if not isinstance(raw, list) or len(raw) < 3:
+            continue
+        first = raw[0]
+        last = raw[-1]
+        if not isinstance(first, (list, tuple)) or len(first) < 2:
+            continue
+        explicit_closure_length = segment_count > 0 and len(raw) == segment_count + 1
+        if explicit_closure_length:
+            raw[-1] = [float(first[0]), float(first[1])]
+        elif not isinstance(last, (list, tuple)) or len(last) < 2 or math.hypot(float(first[0]) - float(last[0]), float(first[1]) - float(last[1])) > tolerance:
+            raw.append([float(first[0]), float(first[1])])
+        else:
+            raw[-1] = [float(first[0]), float(first[1])]
 
 
 def update_component_bboxes(payload: Dict[str, Any]) -> None:

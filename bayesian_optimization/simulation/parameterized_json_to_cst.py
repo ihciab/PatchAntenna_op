@@ -16,6 +16,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from bayesian_optimization.simulation.cst_library_path import ensure_cst_library_path
+from bayesian_optimization.geometry.port_summary_utils import (
+    DEFAULT_INWARD_PORT_OFFSET_PX,
+    shift_point_inward,
+)
 
 ensure_cst_library_path()
 
@@ -49,6 +53,7 @@ class CSTParametricConfig:
     curve_method: str = "polygon"
     simplify_tolerance_px: float = 0.0
     geometry_frame: str = "svg"
+    port_inward_offset_px: float = DEFAULT_INWARD_PORT_OFFSET_PX
 
     @property
     def cst_path(self) -> Path:
@@ -284,6 +289,10 @@ class ParameterizedJsonCSTBuilder:
         if not isinstance(patch_detection, dict):
             return False
 
+        adjustment = ports.get("bo_port_connection_adjustment")
+        if not isinstance(adjustment, dict):
+            adjustment = {}
+
         candidates = patch_detection.get("ports")
         if not isinstance(candidates, list) or not candidates:
             return False
@@ -304,18 +313,38 @@ class ParameterizedJsonCSTBuilder:
         local_width_px = max(2.0, float(candidate.get("local_width", 2.0)))
         half_width = max(1.0, local_width_px * 0.5)
         raw_x, raw_y = x, y
-        snapped_point = self._snap_patch_port_to_reconstructed_geometry(
-            point=(x, y),
-            direction=direction,
-            local_width_px=local_width_px,
-        )
         snap_applied = False
-        if snapped_point is not None:
-            x, y = snapped_point
-            snap_applied = not (
-                math.isclose(x, raw_x, abs_tol=1e-6)
-                and math.isclose(y, raw_y, abs_tol=1e-6)
+        adjustment_used = False
+        free_normal_push_px = 0.0
+        adjusted_point = adjustment.get("connected_point") or adjustment.get("point")
+        if isinstance(adjusted_point, list) and len(adjusted_point) >= 2:
+            try:
+                x = float(adjusted_point[0])
+                y = float(adjusted_point[1])
+                adjustment_used = True
+                free_normal_push_px = max(0.0, float(adjustment.get("final_free_normal_inward_px", 0.0)))
+            except (TypeError, ValueError):
+                adjustment_used = False
+        if not adjustment_used:
+            snapped_point = self._snap_patch_port_to_reconstructed_geometry(
+                point=(x, y),
+                direction=direction,
+                local_width_px=local_width_px,
             )
+            if snapped_point is not None:
+                x, y = snapped_point
+                snap_applied = not (
+                    math.isclose(x, raw_x, abs_tol=1e-6)
+                    and math.isclose(y, raw_y, abs_tol=1e-6)
+                )
+
+        pre_inward_x, pre_inward_y = x, y
+        inward_offset_px = free_normal_push_px if adjustment_used else self.config.port_inward_offset_px
+        x, y = shift_point_inward((x, y), direction, inward_offset_px)
+        inward_shift_applied = not (
+            math.isclose(x, pre_inward_x, abs_tol=1e-6)
+            and math.isclose(y, pre_inward_y, abs_tol=1e-6)
+        )
 
         # 拓扑端口表示的是馈线入口点。这里用入口点附近、垂直于馈线方向的
         # 一小段截面来生成 CST waveguide port，避免继续使用上边界 closest_edge。
@@ -365,7 +394,11 @@ class ParameterizedJsonCSTBuilder:
             f"orientation={orientation}, "
             f"point=({x:.2f}, {y:.2f}), "
             f"raw_point=({raw_x:.2f}, {raw_y:.2f}), "
+            f"adjustment_used={adjustment_used}, "
             f"snapped_to_reconstructed_geometry={snap_applied}, "
+            f"pre_inward_point=({pre_inward_x:.2f}, {pre_inward_y:.2f}), "
+            f"inward_offset_px={inward_offset_px:.2f}, "
+            f"inward_shift_applied={inward_shift_applied}, "
             f"local_width_px={local_width_px:.2f}, "
             f"x=({port_x1}, {port_x2}), "
             f"y=({port_y1}, {port_y2}), "

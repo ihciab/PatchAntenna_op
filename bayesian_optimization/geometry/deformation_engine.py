@@ -165,6 +165,7 @@ class ControlPointDeformer:
                 points[point_index] = move_json_point(points[point_index], dx, dy)
 
         self._move_matching_primitive_points(component, point_index, dx, dy)
+        self._sync_closed_component_points(component)
 
     def _move_matching_primitive_points(
         self,
@@ -188,6 +189,29 @@ class ControlPointDeformer:
                         primitive[key] = move_json_point(value, dx, dy)
                     elif points and point_index == len(points) - 1 and key == "end":
                         primitive[key] = move_json_point(value, dx, dy)
+
+    @staticmethod
+    def _sync_closed_component_points(component: Dict[str, Any], tolerance: float = 1e-7) -> None:
+        """Keep duplicated closure endpoints locked after point movement."""
+
+        if not bool(component.get("closed", False)):
+            return
+        segment_count = len(component.get("segments") or component.get("primitives") or [])
+        for key in ("resampled_points", "fallback_points", "points"):
+            points = component.get(key)
+            if not isinstance(points, list) or len(points) < 3:
+                continue
+            first = points[0]
+            last = points[-1]
+            if not isinstance(first, (list, tuple)) or len(first) < 2:
+                continue
+            explicit_closure_length = segment_count > 0 and len(points) == segment_count + 1
+            if explicit_closure_length:
+                points[-1] = [float(first[0]), float(first[1])]
+            elif not isinstance(last, (list, tuple)) or len(last) < 2 or math.hypot(float(first[0]) - float(last[0]), float(first[1]) - float(last[1])) > tolerance:
+                points.append([float(first[0]), float(first[1])])
+            else:
+                points[-1] = [float(first[0]), float(first[1])]
 
     def _record_history(
         self,

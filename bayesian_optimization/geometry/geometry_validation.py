@@ -91,11 +91,24 @@ class GeometryRepairer:
             if not points:
                 continue
 
-            points = self._repair_points(points, component_index, bool(component.get("closed", False)))
+            segment_count = len(component.get("segments") or component.get("primitives") or [])
+            explicit_closure = bool(component.get("closed", False)) and segment_count > 0 and len(points) == segment_count + 1
+            points = self._repair_points(
+                points,
+                component_index,
+                bool(component.get("closed", False)),
+                explicit_closure=explicit_closure,
+            )
             write_component_points(component, points)
         return repaired
 
-    def _repair_points(self, points: List[Point], component_index: int, closed: bool) -> List[Point]:
+    def _repair_points(
+        self,
+        points: List[Point],
+        component_index: int,
+        closed: bool,
+        explicit_closure: bool = False,
+    ) -> List[Point]:
         before_count = len(points)
         points = remove_consecutive_duplicates(points, self.config.duplicate_tolerance)
         removed = before_count - len(points)
@@ -124,12 +137,18 @@ class GeometryRepairer:
 
         if closed and len(points) >= 3:
             gap = distance_2d(points[0], points[-1])
-            if gap > self.config.closure_tolerance and gap < self.config.closure_repair_tolerance:
-                points[-1] = points[0]
-                self.repair_operations.append(
-                    f"component {component_index}: force closure by snapping last point to first, gap={gap:.12g}"
-                )
-            elif gap <= self.config.closure_tolerance:
+            if gap > self.config.closure_tolerance:
+                if explicit_closure:
+                    points[-1] = points[0]
+                    self.repair_operations.append(
+                        f"component {component_index}: snap explicit closure point to first, gap={gap:.12g}"
+                    )
+                else:
+                    points.append(points[0])
+                    self.repair_operations.append(
+                        f"component {component_index}: append explicit closure point, gap={gap:.12g}"
+                    )
+            else:
                 points[-1] = points[0]
 
         return points

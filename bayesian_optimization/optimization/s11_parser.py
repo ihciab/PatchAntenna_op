@@ -22,6 +22,7 @@ class S11Metrics:
     bandwidth_start_ghz: Optional[float]
     bandwidth_end_ghz: Optional[float]
     point_count: int
+    resonant_frequencies_ghz: Tuple[float, ...] = ()
 
     def to_dict(self):
         data = asdict(self)
@@ -33,7 +34,11 @@ def parse_s11_file(path: Path, target_frequency_ghz: float = 2.4, threshold_db: 
     rows = read_s11_rows(path)
     if not rows:
         raise ValueError(f"S11 文件没有可解析数据: {path}")
-
+    resonance_frequencies = resonant_frequencies_from_rows(
+        rows,
+        limit=2,
+        threshold_db=threshold_db,
+    )
     resonance_freq, min_s11 = min(rows, key=lambda item: item[1])
     target_s11 = interpolate_s11(rows, target_frequency_ghz)
     bandwidth_start, bandwidth_end = bandwidth_edges_below_threshold(rows, threshold_db)
@@ -51,6 +56,7 @@ def parse_s11_file(path: Path, target_frequency_ghz: float = 2.4, threshold_db: 
         bandwidth_start_ghz=bandwidth_start,
         bandwidth_end_ghz=bandwidth_end,
         point_count=len(rows),
+        resonant_frequencies_ghz=resonance_frequencies,
     )
 
 
@@ -67,6 +73,33 @@ def read_s11_rows(path: Path) -> List[Point]:
     rows = [(freq, value) for freq, value in rows if math.isfinite(freq) and math.isfinite(value)]
     rows.sort(key=lambda item: item[0])
     return rows
+
+def resonant_frequencies_from_rows(
+    rows: Sequence[Point],
+    limit: int = 2,
+    threshold_db: float = -10.0,
+) -> Tuple[float, ...]:
+    """Return up to ``limit`` resonance frequencies from local S11 minima.
+
+    The legacy resonance is the single global minimum. For dual-band targets we
+    need the next meaningful dip as well. Only minima at or below the return
+    loss threshold count as resonances for modal-count matching.
+    """
+
+    if not rows or limit <= 0:
+        return tuple()
+    minima = _local_minima(rows)
+    if not minima:
+        minima = [min(rows, key=lambda item: item[1])]
+    qualified = [point for point in minima if point[1] <= threshold_db]
+    if not qualified:
+        global_minimum = min(rows, key=lambda item: item[1])
+        if global_minimum[1] <= threshold_db:
+            qualified = [global_minimum]
+    if not qualified:
+        return tuple()
+    deepest = sorted(qualified, key=lambda item: item[1])[:limit]
+    return tuple(freq for freq, _value in sorted(deepest, key=lambda item: item[0]))
 
 
 def find_latest_s11_file(search_root: Path) -> Path:
@@ -108,17 +141,68 @@ def bandwidth_edges_below_threshold(
     rows: Sequence[Point],
     threshold_db: float = -10.0,
 ) -> Tuple[Optional[float], Optional[float]]:
-    """Return the first and last sampled frequencies whose S11 is below threshold.
+    """Return the widest contiguous sampled band whose S11 is below threshold.
 
     The objective compares these simulated band edges against the paper's
     Start_GHz/End_GHz targets. This keeps the legacy bandwidth_ghz value
     available while exposing the extra information needed by the loss.
     """
 
-    below = [freq for freq, value in rows if value <= threshold_db]
-    if not below:
+    bands = _below_threshold_bands(rows, threshold_db)
+    if not bands:
         return None, None
-    return min(below), max(below)
+    return max(bands, key=lambda band: band[1] - band[0])
+
+
+def _local_minima(rows: Sequence[Point]) -> List[Point]:
+    """Find sampled local minima, including simple flat-bottom dips."""
+
+    if len(rows) < 3:
+        return list(rows)
+
+    minima: List[Point] = []
+    index = 1
+    last_index = len(rows) - 1
+    while index < last_index:
+        left_value = rows[index - 1][1]
+        current_value = rows[index][1]
+        right_index = index + 1
+        while right_index < len(rows) and rows[right_index][1] == current_value:
+            right_index += 1
+        if right_index >= len(rows):
+            break
+        right_value = rows[right_index][1]
+        if current_value <= left_value and current_value <= right_value and (
+            current_value < left_value or current_value < right_value
+        ):
+            plateau = rows[index:right_index]
+            minima.append(plateau[len(plateau) // 2])
+        index = right_index
+    return minima
+
+
+def _below_threshold_bands(
+    rows: Sequence[Point],
+    threshold_db: float,
+) -> List[Tuple[float, float]]:
+    """Return sampled contiguous runs whose values stay below threshold."""
+
+    bands: List[Tuple[float, float]] = []
+    start: Optional[float] = None
+    end: Optional[float] = None
+    for freq, value in rows:
+        if value <= threshold_db:
+            if start is None:
+                start = freq
+            end = freq
+            continue
+        if start is not None and end is not None:
+            bands.append((start, end))
+        start = None
+        end = None
+    if start is not None and end is not None:
+        bands.append((start, end))
+    return bands
 
 
 def _read_python_tuple_series(text: str) -> List[Point]:

@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import pytest
+
+from bayesian_optimization.geometry.port_summary_utils import (
+    ensure_port_summary_connected_to_geometry,
+    normalize_port_side,
+)
 from bayesian_optimization.geometry.feature_shape_optimizer import detect_port_model
 from bayesian_optimization.geometry.primitive_analyzer import analyze_primitives
 
@@ -72,3 +78,40 @@ def test_primitive_port_context_uses_port_summary_side() -> None:
     assert context["propagation_direction"] == [0.0, -1.0]
     assert analysis["primitives"][0]["role"] != "PORT"
     assert analysis["primitives"][1]["role"] == "PORT"
+
+
+def test_normalize_port_side_accepts_bottom() -> None:
+    assert normalize_port_side("bottom") == "bottom"
+
+
+def test_port_summary_connection_shifts_bottom_port_inward_to_curve() -> None:
+    payload = {
+        "components": [
+            {
+                "closed": False,
+                "resampled_points": [
+                    [45.0, 96.0],
+                    [55.0, 96.0],
+                ],
+            }
+        ]
+    }
+    port_summary = _bottom_port_summary()
+
+    connected, report = ensure_port_summary_connected_to_geometry(
+        payload,
+        port_summary,
+        step_px=0.2,
+        tolerance_px=0.05,
+        max_shift_px=10.0,
+    )
+
+    assert report["status"] == "connected_by_inward_shift"
+    assert report["connected_after"] is True
+    assert report["shift_applied_px"] == pytest.approx(4.0)
+    assert report["final_free_normal_shift_applied"] is False
+    assert report["final_free_normal_deferred_to_cst_builder"] is True
+    assert report["geometry_contact_point"] == pytest.approx([50.0, 96.0])
+    assert connected["selected_port"]["point"] == pytest.approx([50.0, 96.0])
+    assert connected["patch_port_detection"]["ports"][0]["point"] == pytest.approx([50.0, 96.0])
+    assert connected["bo_port_connection_adjustment"]["final_free_normal_inward_px"] == pytest.approx(2.0)

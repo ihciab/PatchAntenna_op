@@ -46,8 +46,8 @@ DEFAULT_INSTANCE_DICT: Dict[str, Any] = {
     "Antenna_package": {
         "X": 36,
         "Y": 36,
-        "f0": 6,
-        "f1": 14,
+        "f0": 8,
+        "f1": 12,
     },
     "layers": {
         "layer0": {

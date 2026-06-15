@@ -16,8 +16,9 @@ class ObjectiveWeights:
     """Weights for normalized paper-reconstruction objective terms."""
 
     resonance: float = 4.0
+    resonance_count: float = 8.0
     target_s11: float = 2.0
-    bandwidth_reward: float = 3.0
+    bandwidth_reward: float = 8.0
     gain: float = 1.0
     complexity: float = 0.0
     curvature: float = 0.0
@@ -38,6 +39,7 @@ class ObjectiveBreakdown:
 
     total: float
     primary_frequency_error: float = 0.0
+    resonance_count_penalty: float = 0.0
     target_s11_penalty: float = 0.0
     bandwidth_reward: float = 0.0
     gain_penalty: float = 0.0
@@ -113,11 +115,12 @@ def evaluate_objective(
 
     result = profile.evaluate(s11_metrics, geometry_metrics, w)
 
-    # Continuous loss uses only normalized paper metric errors:
-    # 4*E_res + 3*E_bw + 2*E_s11 + 1*E_gain.
+    # Continuous loss uses normalized paper metric errors, with bandwidth and
+    # modal-count terms weighted strongly for dual-resonance wideband designs.
     return ObjectiveBreakdown(
         total=max(0.0, float(result.total)),
         primary_frequency_error=result.weighted_terms.get("resonance", 0.0),
+        resonance_count_penalty=result.weighted_terms.get("resonance_count", 0.0),
         target_s11_penalty=result.weighted_terms.get("s11", 0.0),
         bandwidth_reward=result.weighted_terms.get("bandwidth", 0.0),
         gain_penalty=result.weighted_terms.get("gain", 0.0),

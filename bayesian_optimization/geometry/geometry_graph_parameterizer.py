@@ -958,6 +958,7 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
             closed=closed,
             source_edge_id=int(source_components[0].get("source_edge_id", 0) or 0),
         )
+        export_points = self._closed_export_points(points) if closed else [list(point) for point in points]
         component = {
             "component_id": int(component_id),
             "source_edge_id": int(source_components[0].get("source_edge_id", 0) or 0),
@@ -967,16 +968,22 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
             "closed": bool(closed),
             "start_node": int(start_node),
             "end_node": int(end_node),
-            "bbox": self._bbox(points),
-            "sampled_point_count": int(len(points)),
-            "fallback_points": [list(point) for point in points],
-            "resampled_points": [list(point) for point in points],
+            "bbox": self._bbox(export_points),
+            "sampled_point_count": int(len(export_points)),
+            "fallback_points": export_points,
+            "resampled_points": export_points,
             "primitives": primitives,
             "segments": primitives,
-            "metrics": self._component_metrics(points, primitives),
+            "metrics": self._component_metrics(export_points, primitives),
             "global_line_triplet_merge": chain_report,
         }
         return component
+
+    def _closed_export_points(self, points: Sequence[Sequence[float]]) -> List[List[float]]:
+        export_points = [list(point) for point in points]
+        if len(export_points) >= 3 and self._point_distance(export_points[0], export_points[-1]) > 1e-7:
+            export_points.append(list(export_points[0]))
+        return export_points
 
     def _line_primitives_from_ordered_points(
         self,
