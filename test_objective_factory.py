@@ -109,6 +109,8 @@ def test_parse_s11_file_reports_two_local_resonances() -> None:
         assert metrics.resonant_frequency_ghz == 10.6
         assert metrics.minimum_s11_db == -22.0
         assert metrics.resonant_frequencies_ghz == (9.0, 10.6)
+        assert metrics.s11_samples[0] == (8.0, -3.0)
+        assert metrics.s11_samples[-1] == (12.0, -4.0)
         assert metrics.to_dict()["resonant_frequencies_ghz"] == (9.0, 10.6)
     finally:
         if s11_path.exists():
@@ -166,7 +168,18 @@ def test_parse_s11_file_uses_widest_contiguous_10db_band() -> None:
             s11_path.unlink()
 
 
-def test_bandwidth_loss_includes_width_shortfall() -> None:
+@pytest.mark.parametrize(
+    "s11_values, expected",
+    [
+        ([-12.0, -11.5, -10.1, -12.2], 0.0),
+        ([-9.0, -9.0, -9.0, -9.0], 0.1),
+        ([0.0, 0.0, 0.0, 0.0], 1.0),
+    ],
+)
+def test_bandwidth_compliance_uses_entire_paper_band(
+    s11_values,
+    expected,
+) -> None:
     instance = {
         "Paper_Performance": {
             "Target_Resonances_GHz": [9.88, 10.12],
@@ -190,14 +203,21 @@ def test_bandwidth_loss_includes_width_shortfall() -> None:
         bandwidth_ghz=0.100,
         bandwidth_start_ghz=9.880,
         bandwidth_end_ghz=9.980,
+        s11_samples=(
+            (9.821, s11_values[0]),
+            (9.900, s11_values[1]),
+            (10.050, s11_values[2]),
+            (10.162, s11_values[3]),
+        ),
     )
 
-    expected_edges = abs(9.880 - 9.821) / 9.821 + abs(9.980 - 10.162) / 10.162
-    expected_shortfall = (0.341 - 0.100) / 0.341
-    assert result.normalized_errors["bandwidth_edges"] == pytest.approx(expected_edges)
-    assert result.normalized_errors["bandwidth_width_shortfall"] == pytest.approx(expected_shortfall)
-    assert result.normalized_errors["bandwidth"] == pytest.approx(expected_edges + expected_shortfall)
-    assert result.weighted_terms["bandwidth"] == pytest.approx(8.0 * (expected_edges + expected_shortfall))
+    assert result.normalized_errors["bandwidth"] == pytest.approx(expected)
+    assert result.normalized_errors["bandwidth_compliance"] == pytest.approx(expected)
+    assert result.actuals["target_start_ghz"] == pytest.approx(9.821)
+    assert result.actuals["target_end_ghz"] == pytest.approx(10.162)
+    assert result.actuals["evaluated_sample_count"] == 4
+    assert result.actuals["bandwidth_compliance_error"] == pytest.approx(expected)
+    assert result.weighted_terms["bandwidth"] == pytest.approx(8.0 * expected)
 
 
 def targets_profile_result(
@@ -206,6 +226,7 @@ def targets_profile_result(
     bandwidth_ghz=1.0,
     bandwidth_start_ghz=9.5,
     bandwidth_end_ghz=10.5,
+    s11_samples=(),
 ):
     from bayesian_optimization.optimization.objective_factory import WidebandPatchObjective
 
@@ -219,5 +240,6 @@ def targets_profile_result(
         bandwidth_end_ghz=bandwidth_end_ghz,
         point_count=101,
         resonant_frequencies_ghz=tuple(resonant_frequencies_ghz),
+        s11_samples=tuple(s11_samples),
     )
     return WidebandPatchObjective(targets).evaluate(metrics, {}, ObjectiveWeights())

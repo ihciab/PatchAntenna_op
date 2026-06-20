@@ -56,7 +56,7 @@
 
     "Polarization": {
       "Type": "Linear",
-      "Axis": "Y"
+      "Axis": "Y" 
     }
   },
 
@@ -72,12 +72,12 @@
 
   "layers": {
     "layer0": {
-      "img_path": "D:\\cst2py_box\\Auto_py2cst_v0.71\\test\\test48.png",
-      "skip_fss_cleanup": true,
+      "img_path": "D:\\cst2py_box\\Auto_py2cst_v0.71\\test\\test51.png",
+      "skip_fss_cleanup": false,
       "substrate": 0.6,
       "gnd": true,
       "col_mats": {
-        "white": "Rogers RT-duroid 5880 (loss free)",
+        "white": "Rogers RT-duroid 5880 (lossy)",
         "gray": "PEC"
       }
     }

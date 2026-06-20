@@ -47,6 +47,14 @@ Point = Tuple[float, float]
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONTROL_POINT_CONSTRAINTS_PATH = PROJECT_ROOT / "control_point_constraints.json"
 FEATURE_SHAPE_CONSTRAINTS_PATH = CONTROL_POINT_CONSTRAINTS_PATH
+GLOBAL_SCALE_X_VARIABLE = "global_scale_x"
+GLOBAL_SCALE_Y_VARIABLE = "global_scale_y"
+PORT_WIDTH_SCALE_VARIABLE = "port_width_scale"
+HIGH_LEVEL_SCALE_VARIABLES = {
+    GLOBAL_SCALE_X_VARIABLE,
+    GLOBAL_SCALE_Y_VARIABLE,
+    PORT_WIDTH_SCALE_VARIABLE,
+}
 
 
 # =============================================================================
@@ -241,11 +249,35 @@ def mutate_geometry(
             curve_parameterization_mode=curve_parameterization_mode,
         )
 
+    high_level_values = {
+        key: float(variable_values[key])
+        for key in HIGH_LEVEL_SCALE_VARIABLES
+        if key in variable_values
+    }
+    local_variable_values = {
+        key: value
+        for key, value in variable_values.items()
+        if key not in HIGH_LEVEL_SCALE_VARIABLES
+    }
+    if high_level_values:
+        apply_high_level_conductor_scaling(mutated, high_level_values, inventory, port_summary=port_summary)
+    local_baseline = copy.deepcopy(mutated) if high_level_values else payload
+    if high_level_values and not local_variable_values:
+        metadata = mutated.setdefault("optimization_metadata", {})
+        metadata["mutation"] = {
+            "variables": dict(variable_values),
+            "strategy": "high_level_conductor_scale_only",
+            "raw_sampled_points_optimized": False,
+            "single_control_point_offsets_enabled": False,
+            "high_level_scaling": metadata.get("high_level_scaling"),
+        }
+        return mutated
+
     if inventory.deformation_plan and inventory.deformation_plan.get("mode") == "primitive_aware_shape_optimization":
         mutated, primitive_report = apply_primitive_aware_mutation(
-            payload,
+            local_baseline,
             mutated,
-            variable_values,
+            local_variable_values,
             inventory.deformation_plan,
             output_dir=output_dir,
             iteration=iteration,
@@ -261,6 +293,7 @@ def mutate_geometry(
             "primitive_aware": True,
             "shape_quality_score": primitive_report.get("shape_quality_score", 0.0),
             "primitive_validation": primitive_report,
+            "high_level_scaling": metadata.get("high_level_scaling"),
         }
         metadata["primitive_aware_mutation"] = primitive_report
         return mutated
@@ -270,7 +303,7 @@ def mutate_geometry(
         deformer = FeatureConstrainedDeformer(shape_plan)
         mutated, deformation_report = deformer.apply(
             mutated,
-            variable_values,
+            local_variable_values,
             iteration=iteration,
             output_dir=output_dir,
         )
@@ -283,10 +316,11 @@ def mutate_geometry(
             "point_group_normal_offsets_enabled": True,
             "geometry_robustness_score": deformation_report.geometry_robustness_score,
             "deformation_validation": deformation_report.to_dict(),
+            "high_level_scaling": metadata.get("high_level_scaling"),
         }
         return mutated
 
-    scale = float(variable_values.get("global_scale", 1.0))
+    scale = float(local_variable_values.get("global_scale", 1.0))
     center = inventory.center
 
     def transform_point(point: Sequence[Any]) -> List[float]:
@@ -304,8 +338,100 @@ def mutate_geometry(
         "variables": dict(variable_values),
         "strategy": "primitive_safe_uniform_scale",
         "raw_sampled_points_optimized": False,
+        "high_level_scaling": metadata.get("high_level_scaling"),
     }
     return mutated
+
+
+def apply_high_level_conductor_scaling(
+    payload: Dict[str, Any],
+    variable_values: Dict[str, float],
+    inventory: PrimitiveInventory,
+    port_summary: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Apply global conductor scale variables without changing substrate metadata."""
+
+    scale_x = float(variable_values.get(GLOBAL_SCALE_X_VARIABLE, 1.0))
+    scale_y = float(variable_values.get(GLOBAL_SCALE_Y_VARIABLE, 1.0))
+    port_scale = float(variable_values.get(PORT_WIDTH_SCALE_VARIABLE, 1.0))
+    center = tuple(float(value) for value in inventory.center)
+
+    if abs(scale_x - 1.0) > 1e-12 or abs(scale_y - 1.0) > 1e-12:
+        _transform_conductor_payload_coordinates(
+            payload,
+            lambda point: [
+                center[0] + (float(point[0]) - center[0]) * scale_x,
+                center[1] + (float(point[1]) - center[1]) * scale_y,
+            ],
+        )
+
+    port_width_report = []
+    if abs(port_scale - 1.0) > 1e-12:
+        try:
+            analysis = analyze_primitives(payload, port_summary=port_summary)
+            for primitive in analysis.get("primitives", []) or []:
+                if primitive.get("type") != "LINE" or primitive.get("role") != "PORT":
+                    continue
+                entry = apply_port_width_scale(payload, primitive, port_scale)
+                if entry:
+                    port_width_report.append(entry)
+        except Exception as exc:
+            port_width_report.append({"status": "skipped", "reason": str(exc)})
+
+    sync_closed_component_point_sequences(payload)
+    update_component_bboxes(payload)
+    metadata = payload.setdefault("optimization_metadata", {})
+    metadata["high_level_scaling"] = {
+        "strategy": "conductor_centered_anisotropic_scale",
+        "center": [float(center[0]), float(center[1])],
+        "global_scale_x": scale_x,
+        "global_scale_y": scale_y,
+        "port_width_scale": port_scale,
+        "scaled_payload_regions": ["nodes", "edges", "components", "constraints"],
+        "substrate_ground_airbox_scaled": False,
+        "port_width_mutations": port_width_report,
+    }
+
+
+def apply_port_width_scale(
+    payload: Dict[str, Any],
+    primitive: Dict[str, Any],
+    port_width_scale: float,
+) -> Dict[str, Any]:
+    """Scale a PORT line width about its midpoint."""
+
+    primitive_obj = primitive_object(payload, primitive)
+    if primitive_obj is None:
+        return {}
+    start = parse_point(primitive_obj.get("start")) or primitive_endpoint_from_samples(payload, primitive, "start")
+    end = parse_point(primitive_obj.get("end")) or primitive_endpoint_from_samples(payload, primitive, "end")
+    if start is None or end is None:
+        return {}
+
+    mid = (0.5 * (start[0] + end[0]), 0.5 * (start[1] + end[1]))
+    half = (
+        0.5 * (end[0] - start[0]) * float(port_width_scale),
+        0.5 * (end[1] - start[1]) * float(port_width_scale),
+    )
+    new_start = (mid[0] - half[0], mid[1] - half[1])
+    new_end = (mid[0] + half[0], mid[1] + half[1])
+    set_line_primitive_endpoints(payload, primitive, new_start, new_end)
+    apply_range_linear_endpoint_motion(
+        payload,
+        primitive,
+        start,
+        end,
+        new_start,
+        new_end,
+        {"summary": {"port_context": {}}},
+        freeze_port_core=False,
+    )
+    return {
+        "primitive_id": primitive.get("primitive_id"),
+        "scale": float(port_width_scale),
+        "start": [float(new_start[0]), float(new_start[1])],
+        "end": [float(new_end[0]), float(new_end[1])],
+    }
 
 
 def apply_primitive_aware_mutation(
@@ -1532,6 +1658,51 @@ def point_bbox(points: Sequence[Point]) -> Tuple[float, float, float, float]:
     xs = [point[0] for point in points]
     ys = [point[1] for point in points]
     return min(xs), min(ys), max(xs), max(ys)
+
+
+def _transform_conductor_payload_coordinates(value: Any, transform_point: Any, parent_key: str = "") -> Any:
+    """Transform only conductor geometry fields in the parameterization payload."""
+
+    point_keys = {
+        "start",
+        "end",
+        "center",
+        "point",
+    }
+    point_list_keys = {
+        "points",
+        "control_points",
+        "fallback_points",
+        "resampled_points",
+        "sampled_points",
+        "smoothed_points",
+        "ordered_points",
+    }
+    traversed_top_level_keys = {"nodes", "edges", "components", "constraints"}
+
+    if isinstance(value, dict):
+        for key, child in list(value.items()):
+            if parent_key == "" and key not in traversed_top_level_keys:
+                continue
+            if key == "bbox" and isinstance(child, list) and len(child) >= 4:
+                value[key] = _transform_bbox(child, transform_point)
+            elif key in point_keys and is_point(child):
+                value[key] = transform_point(child)
+            elif key in point_list_keys and isinstance(child, list):
+                value[key] = [
+                    transform_point(item) if is_point(item) else item
+                    for item in child
+                ]
+            else:
+                _transform_conductor_payload_coordinates(child, transform_point, key)
+        if {"x", "y"}.issubset(value.keys()) and _is_number(value.get("x")) and _is_number(value.get("y")):
+            x, y = transform_point([value["x"], value["y"]])
+            value["x"] = x
+            value["y"] = y
+    elif isinstance(value, list):
+        for item in value:
+            _transform_conductor_payload_coordinates(item, transform_point, parent_key)
+    return value
 
 
 def _transform_payload_coordinates(

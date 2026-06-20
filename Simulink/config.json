@@ -1,13 +1,5 @@
 {
-  "cstModuleBase": {
-    "absolute_path": "D:\\CST Studio Suite 2023\\AMD64\\python_cst_libraries"
-  },
-  "agent_api": {
-    "API_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-    "API_KEY": "sk-628a1c67b7a34697ad42d407a3ae4b93"
-  },
-  "file_handler": {
-    "keep_project": "False",
-    "cst_proj": "D:\\CST2023proj\\autocst\\testFss"
-  }
+  "deprecated": true,
+  "config_source": "..\\config.json",
+  "note": "CST Python library path is loaded from the repository root config.json."
 }

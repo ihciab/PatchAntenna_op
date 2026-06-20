@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -277,6 +277,8 @@ class SubjectEdgeAnalyzer:
         *,
         use_foreground_mask: bool = False,
         border_distance_px: int = 8,
+        parameterization_payload: Optional[dict[str, Any]] = None,
+        parameterization_path: Optional[str | Path] = None,
         debug_dir: Optional[str | Path] = None,
     ) -> PatchPortDetectionResult:
         """Optional patch-antenna port detector built on conductor topology.
@@ -299,6 +301,8 @@ class SubjectEdgeAnalyzer:
                 foreground_mask=result.foreground_mask if use_foreground_mask else None,
                 original_image=result.original_bgr,
                 valid_region_mask=valid_region_mask,
+                parameterization_payload=parameterization_payload,
+                parameterization_path=parameterization_path,
                 debug_dir=debug_dir,
             )
             if port_result.ports or use_foreground_mask:
@@ -314,6 +318,8 @@ class SubjectEdgeAnalyzer:
                 foreground_mask=None,
                 original_image=result.original_bgr,
                 valid_region_mask=valid_region_mask,
+                parameterization_payload=parameterization_payload,
+                parameterization_path=parameterization_path,
                 debug_dir=fallback_debug_dir,
             )
             if fallback_debug_dir is not None:
@@ -327,6 +333,8 @@ class SubjectEdgeAnalyzer:
             subject_mask=result,
             foreground_mask=None,
             original_image=None,
+            parameterization_payload=parameterization_payload,
+            parameterization_path=parameterization_path,
             debug_dir=debug_dir,
         )
 

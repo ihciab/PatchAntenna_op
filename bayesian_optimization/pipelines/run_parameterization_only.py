@@ -24,6 +24,10 @@ for path in (PROJECT_ROOT, REBUILD_DIR):
         sys.path.insert(0, path_text)
 
 from bayesian_optimization.pipelines.fss_simulation_pipeline import FSSImagePreprocessor, write_instance_dict
+from bayesian_optimization.simulation.parameterized_json_to_cst import (
+    generate_cst_length_annotated_svg,
+    load_instance_config,
+)
 
 
 class ParameterizationOnlyRunner:
@@ -122,6 +126,8 @@ class ParameterizationOnlyRunner:
                 json_path = self._parameterize_standard(image_path)
                 actual_mode = "geometry_primitives_standard_fallback"
 
+        length_overlay = self._write_cst_length_overlay(json_path, prepared_instance_path)
+
         metadata = {
             "mode": "parameterization_only",
             "instance_json": str(self.instance_json.resolve()),
@@ -130,6 +136,8 @@ class ParameterizationOnlyRunner:
             "parameterization_image": str(image_path),
             "prepared_instance_json": str(prepared_instance_path),
             "parameterization_json": str(json_path),
+            "cst_length_overlay_svg": length_overlay.get("annotated_svg"),
+            "cst_length_overlay_json": length_overlay.get("report_json"),
             "parameterization_mode": self.parameterization_mode,
             "actual_parameterization_mode": actual_mode,
             "image_preparation": image_status,
@@ -368,6 +376,13 @@ class ParameterizationOnlyRunner:
         if not isinstance(instance, dict):
             raise ValueError(f"Invalid instance JSON payload: {self.instance_json}")
         return instance
+
+    def _write_cst_length_overlay(self, json_path: Path, prepared_instance_path: Path) -> Dict[str, Any]:
+        config = load_instance_config(prepared_instance_path, self.layer_name)
+        config.geometry_frame = "svg"
+        report = generate_cst_length_annotated_svg(json_path, config)
+        self._log(f"cst_length_overlay: {report.get('annotated_svg')}")
+        return report
 
     def _layer_config(self, instance: Dict[str, Any]) -> Dict[str, Any]:
         layers = instance.get("layers", {})

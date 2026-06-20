@@ -44,6 +44,16 @@ class ObjectiveProfileResult:
     actuals: Dict[str, Any]
 
 
+@dataclass(frozen=True)
+class BandwidthComplianceResult:
+    """Full paper-band S11 compliance diagnostics."""
+
+    error: Optional[float]
+    target_start_ghz: Optional[float]
+    target_end_ghz: Optional[float]
+    evaluated_sample_count: int
+
+
 class WidebandPatchObjective:
     """Paper reconstruction objective for wideband patch-like antennas."""
 
@@ -77,21 +87,17 @@ class WidebandPatchObjective:
         # A target resonance of 0.0 means the paper parser did not extract a
         # usable resonance, so the resonance loss should not steer BO.
         e_res = multi_resonance_error_optional(actual_resonances, target_resonances)
-        e_res_count = resonance_count_error_optional(
-            actual_count=len(qualified_actual_resonances),
-            target_count=self.targets.resonance_count,
-        )
-        e_bw_edges = bandwidth_edge_error_optional(
-            simulated_start=s11_metrics.bandwidth_start_ghz,
-            simulated_end=s11_metrics.bandwidth_end_ghz,
+        # e_res_count = resonance_count_error_optional(
+        #     actual_count=len(qualified_actual_resonances),
+        #     target_count=self.targets.resonance_count,
+        # )
+        e_res_count=0.0
+        bw_compliance = bandwidth_compliance_error_optional(
+            s11_samples=getattr(s11_metrics, "s11_samples", ()),
             target_start=self.targets.bandwidth_start_ghz,
             target_end=self.targets.bandwidth_end_ghz,
         )
-        e_bw_shortfall = bandwidth_shortfall_error_optional(
-            simulated_width=s11_metrics.bandwidth_ghz,
-            target_width=self.targets.bandwidth_ghz,
-        )
-        e_bw = combine_bandwidth_errors(e_bw_edges, e_bw_shortfall)
+        e_bw = bw_compliance.error
         if e_bw is None:
             e_bw = normalized_relative_error_optional(
                 s11_metrics.bandwidth_ghz,
@@ -107,8 +113,7 @@ class WidebandPatchObjective:
             "resonance": e_res,
             "resonance_count": e_res_count,
             "bandwidth": e_bw,
-            "bandwidth_edges": e_bw_edges,
-            "bandwidth_width_shortfall": e_bw_shortfall,
+            "bandwidth_compliance": e_bw,
             "gain": e_gain,
             "s11": e_s11,
         }
@@ -137,6 +142,10 @@ class WidebandPatchObjective:
                 "bandwidth_ghz": float(s11_metrics.bandwidth_ghz),
                 "bandwidth_start_ghz": s11_metrics.bandwidth_start_ghz,
                 "bandwidth_end_ghz": s11_metrics.bandwidth_end_ghz,
+                "target_start_ghz": bw_compliance.target_start_ghz,
+                "target_end_ghz": bw_compliance.target_end_ghz,
+                "evaluated_sample_count": bw_compliance.evaluated_sample_count,
+                "bandwidth_compliance_error": e_bw,
                 "gain_dbi": actual_gain,
                 "s11_at_target_db": float(s11_metrics.s11_at_target_db),
                 "minimum_s11_db": float(s11_metrics.minimum_s11_db),
@@ -361,65 +370,74 @@ def resonance_count_error_optional(
     return max(1.0, count_error)
 
 
-def bandwidth_edge_error_optional(
-    simulated_start: Optional[float],
-    simulated_end: Optional[float],
+def bandwidth_compliance_error_optional(
+    s11_samples: Sequence[Sequence[float]],
     target_start: Optional[float],
     target_end: Optional[float],
+    threshold_db: float = -10.0,
     epsilon: float = OBJECTIVE_EPSILON,
-) -> Optional[float]:
-    """Compute the paper-band edge error.
+) -> BandwidthComplianceResult:
+    """Measure whether the whole paper bandwidth satisfies the -10 dB limit.
 
-    Formula requested by the optimization update:
+    Edge-only bandwidth comparison is insufficient for wideband reconstruction:
+    a simulated curve can cross -10 dB near the paper start/end frequencies but
+    still rise above -10 dB in the middle of the band. That design would look
+    acceptable to an edge loss while failing the actual wideband return-loss
+    requirement.
 
-        E_edge =
-            |f_low_sim - f_low_paper| / |f_low_paper|
-          + |f_high_sim - f_high_paper| / |f_high_paper|
+    This objective instead evaluates every sampled S11 point inside the paper
+    interval. Full-band compliance better matches the antenna goal: every
+    frequency that the paper claims as usable bandwidth should satisfy the
+    return-loss threshold, not only the two endpoints.
 
-    A missing simulated or paper edge returns None so the caller can fall back
-    to legacy bandwidth_ghz error when needed.
+    The prompt specifies violations as max(0, s11_db + 10). The per-sample
+    violation is normalized by the 10 dB return-loss scale, keeping E_bw in the
+    same rough 0..1 range as the other normalized objective terms: -9 dB gives
+    0.1, while 0 dB gives 1.0.
     """
 
     if target_start is None or target_end is None:
-        return None
-    low_error = (
-        normalized_relative_error(float(simulated_start), float(target_start), epsilon=epsilon)
-        if simulated_start is not None
-        else 1.0
+        return BandwidthComplianceResult(
+            error=None,
+            target_start_ghz=target_start,
+            target_end_ghz=target_end,
+            evaluated_sample_count=0,
+        )
+
+    start = float(target_start)
+    end = float(target_end)
+    if end <= start:
+        return BandwidthComplianceResult(
+            error=None,
+            target_start_ghz=start,
+            target_end_ghz=end,
+            evaluated_sample_count=0,
+        )
+
+    in_band_samples = [
+        (float(freq), float(s11_db))
+        for freq, s11_db in s11_samples
+        if start <= float(freq) <= end
+    ]
+    if not in_band_samples:
+        return BandwidthComplianceResult(
+            error=1.0,
+            target_start_ghz=start,
+            target_end_ghz=end,
+            evaluated_sample_count=0,
+        )
+
+    normalizer = max(abs(float(threshold_db)), epsilon)
+    violations = [
+        max(0.0, s11_db - float(threshold_db)) / normalizer
+        for _freq, s11_db in in_band_samples
+    ]
+    return BandwidthComplianceResult(
+        error=sum(violations) / len(violations),
+        target_start_ghz=start,
+        target_end_ghz=end,
+        evaluated_sample_count=len(in_band_samples),
     )
-    high_error = (
-        normalized_relative_error(float(simulated_end), float(target_end), epsilon=epsilon)
-        if simulated_end is not None
-        else 1.0
-    )
-    return low_error + high_error
-
-
-def bandwidth_shortfall_error_optional(
-    simulated_width: Optional[float],
-    target_width: Optional[float],
-    epsilon: float = OBJECTIVE_EPSILON,
-) -> Optional[float]:
-    """Penalize only missing 10 dB bandwidth; wider-than-target is acceptable."""
-
-    if simulated_width is None or target_width is None:
-        return None
-    target_value = float(target_width)
-    if target_value <= 0.0:
-        return None
-    shortfall = max(0.0, target_value - max(0.0, float(simulated_width)))
-    return shortfall / max(abs(target_value), epsilon)
-
-
-def combine_bandwidth_errors(
-    edge_error: Optional[float],
-    shortfall_error: Optional[float],
-) -> Optional[float]:
-    """Combine edge placement and minimum-width requirements into one loss."""
-
-    if edge_error is None and shortfall_error is None:
-        return None
-    return float(edge_error or 0.0) + float(shortfall_error or 0.0)
 
 
 def _extract_bandwidth_target(paper: Dict[str, Any]) -> tuple[Optional[float], Optional[float], Optional[float]]:

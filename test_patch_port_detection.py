@@ -36,6 +36,32 @@ def _inset_feed_patch() -> np.ndarray:
     return mask
 
 
+def _line_payload(points: list[tuple[float, float]]) -> dict:
+    primitives = []
+    for index in range(len(points) - 1):
+        start = [float(points[index][0]), float(points[index][1])]
+        end = [float(points[index + 1][0]), float(points[index + 1][1])]
+        primitives.append(
+            {
+                "type": "line",
+                "start": start,
+                "end": end,
+                "points": [start, end],
+            }
+        )
+    return {
+        "schema_version": "test",
+        "canvas": {"width": 160, "height": 140, "unit": "px"},
+        "components": [
+            {
+                "component_id": 1,
+                "closed": True,
+                "primitives": primitives,
+            }
+        ],
+    }
+
+
 def test_simple_microstrip_patch_detects_left_border_port() -> None:
     detector = PatchPortTopologyDetector(border_distance_px=8, min_component_area=100)
 
@@ -49,6 +75,34 @@ def test_simple_microstrip_patch_detects_left_border_port() -> None:
     assert best.score >= 10.0
     assert result.endpoint_mask.dtype == np.uint8
     assert int(np.count_nonzero(result.endpoint_mask)) >= 1
+
+
+def test_parameterized_lines_override_background_border_endpoint_noise() -> None:
+    mask = _blank_mask((140, 160))
+    cv2.rectangle(mask, (2, 2), (157, 137), 255, -1)
+    cv2.line(mask, (157, 2), (132, 27), 0, 1)
+
+    metal_outline = [
+        (52, 50),
+        (108, 50),
+        (108, 96),
+        (88, 96),
+        (88, 136),
+        (72, 136),
+        (72, 96),
+        (52, 96),
+        (52, 50),
+    ]
+    detector = PatchPortTopologyDetector(border_distance_px=8, min_component_area=100)
+
+    result = detector.detect_ports(subject_mask=mask, parameterization_payload=_line_payload(metal_outline))
+
+    assert result.ports
+    best = result.ports[0]
+    assert best.direction == "bottom"
+    assert best.point == (80, 136)
+    assert best.local_width == pytest.approx(16.0)
+    assert result.debug_metadata["parameterization_guidance"]["terminal_hint_count"] >= 1
 
 
 def test_inset_feed_patch_detects_bottom_border_port() -> None:
@@ -350,7 +404,7 @@ def test_cst_builder_uses_bo_port_connection_adjustment_without_resnapping(tmp_p
     ports = {
         "bo_port_connection_adjustment": {
             "connected_point": [110.0, 171.9],
-            "final_free_normal_inward_px": 2.0,
+            "final_free_normal_inward_px": 10.0,
         },
         "patch_port_detection": {
             "ports": [
@@ -371,4 +425,4 @@ def test_cst_builder_uses_bo_port_connection_adjustment_without_resnapping(tmp_p
     assert used
     _, command = builder.modeler.history[0]
     assert '.Orientation "ymin"' in command
-    assert '.Yrange "-13.0745455", "-13.0745455"' in command
+    assert '.Yrange "-11.7654545", "-11.7654545"' in command

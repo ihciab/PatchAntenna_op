@@ -1,5 +1,65 @@
 # BO Change Log
 
+## 2026-06-18 00:00:00 +08:00
+
+### Modified Files
+
+- `bayesian_optimization/optimization/multistage.py`
+- `bayesian_optimization/geometry/primitive_mutator.py`
+- `bayesian_optimization/pipelines/optimization_pipeline.py`
+- `bayesian_optimization/simulation/parameterized_json_to_cst.py`
+- `docs/bo_change_log.md`
+
+### Reason
+
+The antenna BO loop can waste many expensive CST evaluations when the
+parameterized conductor has an electrical scale drift. A multi-stage BO mode
+was added to first lock global electrical scale, then optimize local shape, and
+finally jointly fine tune both.
+
+### Algorithm Changes
+
+- Added `OptimizationStage` and `StageManager`.
+- Added optional high-level variables: `global_scale_x`, `global_scale_y`, and
+  `port_width_scale`.
+- Stage 1 samples only the three high-level scale variables and feeds Optuna
+  `1.0 * ERES + 1.0 * EBW`.
+- Stage 2 fixes the Stage 1 best scales and samples the existing local geometry
+  variables with `0.2 * ERES + 1.0 * EBW`.
+- Stage 3 samples high-level scales in a +/-5% window around the Stage 1 best
+  values together with all local variables, then feeds the existing full
+  objective total to Optuna.
+- Global scaling is applied only to parameterized conductor geometry fields in
+  the JSON payload and leaves canvas/substrate/ground/airbox metadata unchanged.
+- Per-evaluation temporary port summaries now receive `port_width_scale` so the
+  CST waveguide port width follows the high-level feed-width variable.
+- In multi-stage mode, each evaluation now writes
+  `mutation_stage_curve_parameterization.json` before CST handoff/repair and
+  `cst_input_curve_parameterization.json` after repair/port connection so the
+  exact scaled parameterization and the exact CST input can be inspected.
+- CST handoff now checks compact primitive endpoint continuity before using
+  primitives for extrusion. If high-level port scaling creates primitive gaps,
+  the builder falls back to the closed sampled polygon so the conductor solid is
+  still generated in CST.
+
+### Compatibility
+
+- `enable_multistage_optimization` defaults to `False`, preserving the existing
+  single-stage behavior.
+- Existing CST build, parameterization, S11 parsing, and objective factory
+  interfaces are unchanged.
+- CLI users can enable the mode with `--enable-multistage-optimization`.
+
+### Risk Analysis
+
+- The new high-level scale variables can move conductor geometry closer to the
+  canvas/substrate boundary; existing geometry validation still rejects unsafe
+  samples before CST.
+- Stage 1 and Stage 3 require enough evaluation budget. Validation rejects
+  configurations where `stage1_trials + stage3_trials >= max_evaluations`.
+- Stage 3 uses the Stage 1 best scale as its center. If Stage 1 never produces
+  a finite non-failure result, the fallback center remains `1.0`.
+
 ## 2026-06-08 11:28:06 +08:00
 
 ### Modified Files

@@ -328,7 +328,7 @@ class Simulation:
                     draw_solid = ch.cst_extrudecurve(name='sub_'+super_curve,
                                                      curve=layer+':'+super_curve,
                                                      component=layer,
-                                                     material='Rogers RT-duroid 5880 (loss free)',
+                                                     material='Rogers RT-duroid 5880 (lossy)',
                                                      thickness=substrate
                                                      )
                     self._Modeler.add_to_history(f'set_{layer}_sub_{super_curve}', draw_solid)
@@ -447,7 +447,7 @@ if __name__ == '__main__':
                        'substrate': 0.6,
                        'gnd': True,
                        'col_mats': {
-                           'white': 'Rogers RT-duroid 5880 (loss free)',
+                           'white': 'Rogers RT-duroid 5880 (lossy)',
                            'gray': 'PEC',
                        },
                        },
@@ -465,7 +465,7 @@ if __name__ == '__main__':
                        'substrate': 0.6,
                        'gnd': True,
                        'col_mats': {
-                           'cyan': 'Rogers RT-duroid 5880 (loss free)',
+                           'cyan': 'Rogers RT-duroid 5880 (lossy)',
                            'orange': 'PEC',
                        },
                        },

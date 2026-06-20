@@ -47,6 +47,30 @@ class _MainPatchRegion:
     looks_like_frame: bool
 
 
+@dataclass(frozen=True)
+class _ParameterizedLineSegment:
+    id: int
+    start: tuple[float, float]
+    end: tuple[float, float]
+    length: float
+    component_id: Optional[int]
+    primitive_index: Optional[int]
+    source: str
+
+
+@dataclass(frozen=True)
+class _ParameterizedPortHint:
+    point: tuple[int, int]
+    direction: str
+    local_width: float
+    score: float
+    confidence: float
+    segment_id: int
+    distance_to_image_border: float
+    extremity_distance: float
+    length_ratio: float
+
+
 class PatchPortTopologyDetector:
     """Topology-first detector for patch antenna feed ports.
 
@@ -77,6 +101,8 @@ class PatchPortTopologyDetector:
         foreground_mask: Optional[np.ndarray] = None,
         original_image: Optional[np.ndarray] = None,
         valid_region_mask: Optional[np.ndarray] = None,
+        parameterization_payload: Optional[dict[str, Any]] = None,
+        parameterization_path: Optional[str | Path] = None,
         debug_dir: Optional[str | Path] = None,
     ) -> PatchPortDetectionResult:
         """Detect patch feed-port candidates from a conductive mask."""
@@ -90,6 +116,16 @@ class PatchPortTopologyDetector:
         valid_region = self._normalize_valid_region(valid_region_mask, binary_mask.shape)
         valid_region_bbox = self._mask_bbox(valid_region) if valid_region is not None else None
         labels, main_patch = self._find_main_patch_region(binary_mask)
+        parameterization_payload = self._load_parameterization_payload(
+            parameterization_payload=parameterization_payload,
+            parameterization_path=parameterization_path,
+        )
+        parameterized_segments = self._extract_parameterized_line_segments(parameterization_payload)
+        parameterized_hints = self._build_parameterized_port_hints(
+            segments=parameterized_segments,
+            payload=parameterization_payload,
+            image_shape=binary_mask.shape,
+        )
 
         skeleton_mask = self._build_skeleton(binary_mask)
         endpoints, endpoint_mask = self._find_skeleton_endpoints(skeleton_mask)
@@ -121,8 +157,23 @@ class PatchPortTopologyDetector:
             distance_map=distance_map,
             terminal_keys=terminal_keys,
         )
+        if parameterized_segments:
+            raw_candidates, parameterized_evidence = self._apply_parameterized_line_guidance(
+                candidates=raw_candidates,
+                segments=parameterized_segments,
+            )
+            self._attach_parameterized_evidence(feed_branch_metadata, parameterized_evidence)
+        parameterized_candidates = self._port_hint_candidates(
+            hints=parameterized_hints,
+            segments=parameterized_segments,
+        )
+        parameterized_candidate_keys = {
+            (candidate.point, candidate.direction) for candidate in parameterized_candidates
+        }
+        raw_candidates = self._rank_port_candidates(raw_candidates + parameterized_candidates)
+        feed_branch_metadata.extend(self._port_hint_metadata(parameterized_hints, parameterized_segments))
 
-        if main_patch is None or main_patch.looks_like_frame:
+        if (main_patch is None or main_patch.looks_like_frame) and not parameterized_hints:
             selected_ports: list[PatchPortCandidate] = []
         else:
             selected_ports = [
@@ -139,6 +190,7 @@ class PatchPortTopologyDetector:
                 skeleton_mask=skeleton_mask,
                 valid_region_mask=valid_region,
                 original_image=original_image,
+                skip_refine_keys=parameterized_candidate_keys,
                 debug_dir=Path(debug_dir) if debug_dir is not None else None,
             )
 
@@ -159,6 +211,12 @@ class PatchPortTopologyDetector:
             "endpoint_count": int(len(endpoints)),
             "border_endpoint_count": int(len(raw_candidates)),
             "terminal_face_candidate_count": int(len(terminal_face_candidates)),
+            "parameterization_guidance": self._parameterization_guidance_to_dict(
+                payload=parameterization_payload,
+                path=parameterization_path,
+                segments=parameterized_segments,
+                hints=parameterized_hints,
+            ),
             "selected_port_count": int(len(selected_ports)),
             "candidate_ports": [asdict(candidate) for candidate in raw_candidates],
             "feed_branch_analysis": feed_branch_metadata,
@@ -378,6 +436,481 @@ class PatchPortTopologyDetector:
 
         _, selected = max(candidates, key=lambda item: item[0])
         return labels, selected
+
+    def _load_parameterization_payload(
+        self,
+        *,
+        parameterization_payload: Optional[dict[str, Any]],
+        parameterization_path: Optional[str | Path],
+    ) -> Optional[dict[str, Any]]:
+        if isinstance(parameterization_payload, dict):
+            return parameterization_payload
+        if parameterization_path is None:
+            return None
+        path = Path(parameterization_path)
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _extract_parameterized_line_segments(
+        self,
+        payload: Optional[dict[str, Any]],
+    ) -> list[_ParameterizedLineSegment]:
+        if not isinstance(payload, dict):
+            return []
+
+        segments: list[_ParameterizedLineSegment] = []
+        seen: set[tuple[float, float, float, float]] = set()
+
+        def add_segment(
+            start: Optional[tuple[float, float]],
+            end: Optional[tuple[float, float]],
+            *,
+            source: str,
+            component_id: Optional[int] = None,
+            primitive_index: Optional[int] = None,
+        ) -> None:
+            if start is None or end is None:
+                return
+            length = float(np.hypot(end[0] - start[0], end[1] - start[1]))
+            if length <= 1e-6:
+                return
+            key = (
+                round(float(start[0]), 4),
+                round(float(start[1]), 4),
+                round(float(end[0]), 4),
+                round(float(end[1]), 4),
+            )
+            reverse_key = (key[2], key[3], key[0], key[1])
+            if key in seen or reverse_key in seen:
+                return
+            seen.add(key)
+            segments.append(
+                _ParameterizedLineSegment(
+                    id=len(segments),
+                    start=(float(start[0]), float(start[1])),
+                    end=(float(end[0]), float(end[1])),
+                    length=length,
+                    component_id=component_id,
+                    primitive_index=primitive_index,
+                    source=source,
+                )
+            )
+
+        for component_index, component in enumerate(payload.get("components", []) or []):
+            if not isinstance(component, dict):
+                continue
+            component_id = self._optional_int(component.get("component_id"), default=component_index)
+            primitives = component.get("primitives")
+            if not isinstance(primitives, list):
+                continue
+            for primitive_index, primitive in enumerate(primitives):
+                if not isinstance(primitive, dict) or not self._looks_like_line_primitive(primitive):
+                    continue
+                start, end = self._primitive_line_endpoints(primitive)
+                add_segment(
+                    start,
+                    end,
+                    source="component_primitives",
+                    component_id=component_id,
+                    primitive_index=primitive_index,
+                )
+
+        if segments:
+            return segments
+
+        primitives = payload.get("primitives")
+        if isinstance(primitives, list):
+            for primitive_index, primitive in enumerate(primitives):
+                if not isinstance(primitive, dict) or not self._looks_like_line_primitive(primitive):
+                    continue
+                start, end = self._primitive_line_endpoints(primitive)
+                add_segment(
+                    start,
+                    end,
+                    source="top_level_primitives",
+                    primitive_index=primitive_index,
+                )
+
+        if segments:
+            return segments
+
+        for edge_index, edge in enumerate(payload.get("edges", []) or []):
+            if not isinstance(edge, dict):
+                continue
+            points = edge.get("ordered_points")
+            if not isinstance(points, list) or len(points) < 2:
+                continue
+            start = self._parse_xy_point(points[0])
+            end = self._parse_xy_point(points[-1])
+            add_segment(start, end, source="edge_endpoints", primitive_index=edge_index)
+
+        return segments
+
+    @staticmethod
+    def _looks_like_line_primitive(primitive: dict[str, Any]) -> bool:
+        labels = [
+            str(primitive.get("type", "")).lower(),
+            str(primitive.get("kind", "")).lower(),
+            str(primitive.get("primitive_type", "")).lower(),
+        ]
+        return any(label == "line" or label.endswith("_line") for label in labels)
+
+    def _primitive_line_endpoints(
+        self,
+        primitive: dict[str, Any],
+    ) -> tuple[Optional[tuple[float, float]], Optional[tuple[float, float]]]:
+        start = self._parse_xy_point(primitive.get("start"))
+        end = self._parse_xy_point(primitive.get("end"))
+        if start is not None and end is not None:
+            return start, end
+
+        parameters = primitive.get("parameters")
+        if isinstance(parameters, dict):
+            start = self._parse_xy_point(parameters.get("start"))
+            end = self._parse_xy_point(parameters.get("end"))
+            if start is not None and end is not None:
+                return start, end
+
+        points = primitive.get("points")
+        if isinstance(points, list) and len(points) >= 2:
+            return self._parse_xy_point(points[0]), self._parse_xy_point(points[-1])
+        return None, None
+
+    @staticmethod
+    def _parse_xy_point(value: Any) -> Optional[tuple[float, float]]:
+        if not isinstance(value, (list, tuple)) or len(value) < 2:
+            return None
+        try:
+            return float(value[0]), float(value[1])
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _optional_int(value: Any, *, default: Optional[int] = None) -> Optional[int]:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _build_parameterized_port_hints(
+        self,
+        *,
+        segments: list[_ParameterizedLineSegment],
+        payload: Optional[dict[str, Any]],
+        image_shape: tuple[int, int],
+    ) -> list[_ParameterizedPortHint]:
+        if not segments:
+            return []
+
+        bbox = self._segments_bbox(segments)
+        if bbox is None:
+            return []
+        min_x, min_y, max_x, max_y = bbox
+        bbox_w = max(1.0, max_x - min_x)
+        bbox_h = max(1.0, max_y - min_y)
+        extremity_tolerance = max(5.0, min(36.0, min(bbox_w, bbox_h) * 0.08))
+        max_terminal_ratio = 0.45
+        min_terminal_length = max(4.0, min(10.0, min(bbox_w, bbox_h) * 0.008))
+        canvas_w, canvas_h = self._payload_canvas_size(payload, image_shape)
+
+        hints: list[_ParameterizedPortHint] = []
+        for segment in segments:
+            if segment.length < min_terminal_length:
+                continue
+            sx, sy = segment.start
+            ex, ey = segment.end
+            dx = ex - sx
+            dy = ey - sy
+            cx = (sx + ex) / 2.0
+            cy = (sy + ey) / 2.0
+            is_horizontal = abs(dy) <= max(2.0, abs(dx) * 0.2)
+            is_vertical = abs(dx) <= max(2.0, abs(dy) * 0.2)
+
+            side_records: list[tuple[str, float]] = []
+            if is_horizontal:
+                length_ratio = segment.length / bbox_w
+                if length_ratio <= max_terminal_ratio:
+                    side_records.append(("top", max(0.0, cy - min_y)))
+                    side_records.append(("bottom", max(0.0, max_y - cy)))
+            if is_vertical:
+                length_ratio = segment.length / bbox_h
+                if length_ratio <= max_terminal_ratio:
+                    side_records.append(("left", max(0.0, cx - min_x)))
+                    side_records.append(("right", max(0.0, max_x - cx)))
+
+            for side, extremity_distance in side_records:
+                if extremity_distance > extremity_tolerance:
+                    continue
+                reference_span = bbox_w if side in {"top", "bottom"} else bbox_h
+                length_ratio = segment.length / max(1.0, reference_span)
+                if side == "top":
+                    image_border_distance = max(0.0, cy)
+                elif side == "bottom":
+                    image_border_distance = max(0.0, canvas_h - 1.0 - cy)
+                elif side == "left":
+                    image_border_distance = max(0.0, cx)
+                else:
+                    image_border_distance = max(0.0, canvas_w - 1.0 - cx)
+                border_bonus = 1.5 if image_border_distance <= max(self.border_distance_px, 24) else 0.0
+                score = 24.0 - 9.0 * length_ratio - 0.08 * extremity_distance + border_bonus
+                confidence = max(0.5, min(1.0, 1.0 - 0.8 * length_ratio - 0.01 * extremity_distance))
+                hints.append(
+                    _ParameterizedPortHint(
+                        point=(int(round(cx)), int(round(cy))),
+                        direction=side,
+                        local_width=round(float(segment.length), 3),
+                        score=round(float(score), 3),
+                        confidence=round(float(confidence), 3),
+                        segment_id=segment.id,
+                        distance_to_image_border=round(float(image_border_distance), 3),
+                        extremity_distance=round(float(extremity_distance), 3),
+                        length_ratio=round(float(length_ratio), 4),
+                    )
+                )
+
+        hints.sort(
+            key=lambda hint: (
+                -hint.score,
+                hint.distance_to_image_border,
+                hint.extremity_distance,
+                hint.segment_id,
+            )
+        )
+        deduped: list[_ParameterizedPortHint] = []
+        seen: set[tuple[tuple[int, int], str]] = set()
+        for hint in hints:
+            key = (hint.point, hint.direction)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(hint)
+        return deduped[: max(1, self.max_ports)]
+
+    @staticmethod
+    def _segments_bbox(
+        segments: list[_ParameterizedLineSegment],
+    ) -> Optional[tuple[float, float, float, float]]:
+        if not segments:
+            return None
+        xs: list[float] = []
+        ys: list[float] = []
+        for segment in segments:
+            xs.extend([segment.start[0], segment.end[0]])
+            ys.extend([segment.start[1], segment.end[1]])
+        return min(xs), min(ys), max(xs), max(ys)
+
+    @staticmethod
+    def _payload_canvas_size(
+        payload: Optional[dict[str, Any]],
+        image_shape: tuple[int, int],
+    ) -> tuple[float, float]:
+        height, width = image_shape
+        if isinstance(payload, dict):
+            canvas = payload.get("canvas")
+            if isinstance(canvas, dict):
+                try:
+                    canvas_w = float(canvas.get("width"))
+                    canvas_h = float(canvas.get("height"))
+                    if canvas_w > 0 and canvas_h > 0:
+                        return canvas_w, canvas_h
+                except (TypeError, ValueError):
+                    pass
+        return float(width), float(height)
+
+    def _port_hint_candidates(
+        self,
+        *,
+        hints: list[_ParameterizedPortHint],
+        segments: list[_ParameterizedLineSegment],
+    ) -> list[PatchPortCandidate]:
+        if not hints:
+            return []
+        bbox = self._segments_bbox(segments)
+        candidates: list[PatchPortCandidate] = []
+        for hint in hints:
+            path_length = 0.0
+            if bbox is not None:
+                cx = (bbox[0] + bbox[2]) / 2.0
+                cy = (bbox[1] + bbox[3]) / 2.0
+                path_length = float(np.hypot(hint.point[0] - cx, hint.point[1] - cy))
+            candidates.append(
+                PatchPortCandidate(
+                    id=len(candidates),
+                    point=hint.point,
+                    direction=hint.direction,
+                    touches_border=bool(hint.distance_to_image_border <= self.border_distance_px),
+                    local_width=hint.local_width,
+                    path_length_to_patch=round(path_length, 3),
+                    connected_to_main_patch=True,
+                    score=hint.score,
+                    confidence=hint.confidence,
+                )
+            )
+        return candidates
+
+    def _apply_parameterized_line_guidance(
+        self,
+        *,
+        candidates: list[PatchPortCandidate],
+        segments: list[_ParameterizedLineSegment],
+    ) -> tuple[list[PatchPortCandidate], dict[tuple[tuple[int, int], str], dict[str, Any]]]:
+        if not candidates or not segments:
+            return candidates, {}
+
+        guided: list[PatchPortCandidate] = []
+        evidence: dict[tuple[tuple[int, int], str], dict[str, Any]] = {}
+        for candidate in candidates:
+            best_segment, distance = self._nearest_parameterized_segment(candidate.point, segments)
+            compatible = best_segment is not None and self._segment_direction_matches_port(best_segment, candidate.direction)
+            near_threshold = max(8.0, min(40.0, float(candidate.local_width) * 1.25))
+            if best_segment is not None and distance <= near_threshold:
+                delta = 4.0 if compatible else 1.0
+            else:
+                delta = -14.0
+            score = round(float(candidate.score + delta), 3)
+            confidence = candidate.confidence
+            if delta < 0:
+                confidence = round(float(max(0.02, candidate.confidence * 0.35)), 3)
+            guided_candidate = PatchPortCandidate(
+                id=candidate.id,
+                point=candidate.point,
+                direction=candidate.direction,
+                touches_border=candidate.touches_border,
+                local_width=candidate.local_width,
+                path_length_to_patch=candidate.path_length_to_patch,
+                connected_to_main_patch=candidate.connected_to_main_patch,
+                score=score,
+                confidence=confidence,
+            )
+            guided.append(guided_candidate)
+            evidence[(candidate.point, candidate.direction)] = {
+                "enabled": True,
+                "nearest_segment_id": best_segment.id if best_segment is not None else None,
+                "nearest_line_distance_px": round(float(distance), 3),
+                "near_threshold_px": round(float(near_threshold), 3),
+                "direction_compatible": bool(compatible),
+                "score_delta": round(float(delta), 3),
+            }
+        return self._rank_port_candidates(guided), evidence
+
+    @staticmethod
+    def _nearest_parameterized_segment(
+        point: tuple[int, int],
+        segments: list[_ParameterizedLineSegment],
+    ) -> tuple[Optional[_ParameterizedLineSegment], float]:
+        if not segments:
+            return None, float("inf")
+        px = float(point[0])
+        py = float(point[1])
+        best_segment: Optional[_ParameterizedLineSegment] = None
+        best_distance = float("inf")
+        for segment in segments:
+            distance = PatchPortTopologyDetector._point_to_line_segment_distance(
+                (px, py),
+                segment.start,
+                segment.end,
+            )
+            if distance < best_distance:
+                best_segment = segment
+                best_distance = distance
+        return best_segment, best_distance
+
+    @staticmethod
+    def _point_to_line_segment_distance(
+        point: tuple[float, float],
+        start: tuple[float, float],
+        end: tuple[float, float],
+    ) -> float:
+        px, py = point
+        sx, sy = start
+        ex, ey = end
+        dx = ex - sx
+        dy = ey - sy
+        denom = dx * dx + dy * dy
+        if denom <= 1e-12:
+            return float(np.hypot(px - sx, py - sy))
+        ratio = ((px - sx) * dx + (py - sy) * dy) / denom
+        ratio = max(0.0, min(1.0, float(ratio)))
+        qx = sx + ratio * dx
+        qy = sy + ratio * dy
+        return float(np.hypot(px - qx, py - qy))
+
+    @staticmethod
+    def _segment_direction_matches_port(segment: _ParameterizedLineSegment, direction: str) -> bool:
+        dx = segment.end[0] - segment.start[0]
+        dy = segment.end[1] - segment.start[1]
+        if direction in {"top", "bottom"}:
+            return abs(dy) <= max(2.0, abs(dx) * 0.25)
+        if direction in {"left", "right"}:
+            return abs(dx) <= max(2.0, abs(dy) * 0.25)
+        return False
+
+    @staticmethod
+    def _attach_parameterized_evidence(
+        metadata: list[dict[str, Any]],
+        evidence: dict[tuple[tuple[int, int], str], dict[str, Any]],
+    ) -> None:
+        if not metadata or not evidence:
+            return
+        for item in metadata:
+            point = item.get("candidate_point")
+            direction = item.get("candidate_direction")
+            if isinstance(point, list) and len(point) >= 2 and isinstance(direction, str):
+                key = ((int(point[0]), int(point[1])), direction)
+                item["parameterized_line_evidence"] = evidence.get(key)
+
+    @staticmethod
+    def _port_hint_metadata(
+        hints: list[_ParameterizedPortHint],
+        segments: list[_ParameterizedLineSegment],
+    ) -> list[dict[str, Any]]:
+        by_id = {segment.id: segment for segment in segments}
+        metadata: list[dict[str, Any]] = []
+        for hint in hints:
+            segment = by_id.get(hint.segment_id)
+            metadata.append(
+                {
+                    "candidate_point": list(hint.point),
+                    "candidate_direction": hint.direction,
+                    "candidate_source": "parameterized_line_terminal",
+                    "terminal_face_candidate": True,
+                    "base_score": hint.score,
+                    "adjusted_score": hint.score,
+                    "parameterized_line_evidence": {
+                        "enabled": True,
+                        "generated_candidate": True,
+                        "segment_id": hint.segment_id,
+                        "segment_start": list(segment.start) if segment is not None else None,
+                        "segment_end": list(segment.end) if segment is not None else None,
+                        "line_length_px": round(float(segment.length), 3) if segment is not None else None,
+                        "distance_to_image_border_px": hint.distance_to_image_border,
+                        "extremity_distance_px": hint.extremity_distance,
+                        "length_ratio": hint.length_ratio,
+                    },
+                }
+            )
+        return metadata
+
+    @staticmethod
+    def _parameterization_guidance_to_dict(
+        *,
+        payload: Optional[dict[str, Any]],
+        path: Optional[str | Path],
+        segments: list[_ParameterizedLineSegment],
+        hints: list[_ParameterizedPortHint],
+    ) -> dict[str, Any]:
+        return {
+            "enabled": bool(isinstance(payload, dict)),
+            "path": str(path) if path is not None else None,
+            "line_segment_count": int(len(segments)),
+            "terminal_hint_count": int(len(hints)),
+            "terminal_hints": [asdict(hint) for hint in hints],
+        }
 
     def _score_port_candidates(
         self,
@@ -998,6 +1531,7 @@ class PatchPortTopologyDetector:
         skeleton_mask: np.ndarray,
         valid_region_mask: Optional[np.ndarray],
         original_image: Optional[np.ndarray],
+        skip_refine_keys: Optional[set[tuple[tuple[int, int], str]]] = None,
         debug_dir: Optional[Path],
     ) -> tuple[list[PatchPortCandidate], list[dict[str, Any]]]:
         """Attach CST-oriented geometry metadata without moving the contact point.
@@ -1016,6 +1550,21 @@ class PatchPortTopologyDetector:
 
         for port in selected_ports:
             endpoint = port.point
+            if skip_refine_keys is not None and (port.point, port.direction) in skip_refine_keys:
+                refined_ports.append(port)
+                geometry_metadata.append(
+                    {
+                        "port_id": port.id,
+                        "endpoint": list(endpoint),
+                        "raw_endpoint": list(endpoint),
+                        "cst_contact_point": list(endpoint),
+                        "feed_width": port.local_width,
+                        "refined": False,
+                        "reason": "parameterized_line_terminal_kept",
+                    }
+                )
+                continue
+
             geometry = builder.build_port_geometry(
                 endpoint=endpoint,
                 border_side=port.direction,

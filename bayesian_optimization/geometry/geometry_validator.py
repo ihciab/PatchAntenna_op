@@ -314,12 +314,20 @@ def is_feedline_port_corridor_exempt(
         return False
     if primitive.get("role") != "FEEDLINE":
         return False
+
+    points = [tuple(point) for point in primitive.get("points", []) if len(point) >= 2]
     center = _primitive_center(primitive)
-    if center is None:
+    candidate_points: List[Point] = [(float(x), float(y)) for x, y in points]
+    if center is not None:
+        candidate_points.append(center)
+    if not candidate_points:
         return False
+
     for key in ("core_bbox", "neighbor_bbox"):
         bbox = port_context.get(key)
-        if isinstance(bbox, list) and len(bbox) >= 4 and _point_in_bbox(center, bbox):
+        if not isinstance(bbox, list) or len(bbox) < 4:
+            continue
+        if any(_point_in_bbox(point, bbox) for point in candidate_points):
             return True
     return False
 

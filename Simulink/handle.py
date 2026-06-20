@@ -266,11 +266,15 @@ def cst_import_stl(stl_path:str, stl_name:str, component='default', ):
 
 def cst_load_material(material):
     cst_command = []
-    if material == 'FR4':
+    if material in ('FR4', 'FR-4 (loss free)'):
+        material_name = material
+        tan_d = '0.0' if material == 'FR-4 (loss free)' else '0.025'
+        tan_d_freq = '0.0' if material == 'FR-4 (loss free)' else '10.0'
+        tan_d_given = 'False' if material == 'FR-4 (loss free)' else 'True'
         cst_command = [
             'With Material',
             '.Reset',
-            '.Name "FR4"',
+            f'.Name "{material_name}"',
             '.Folder ""',
             '.FrqType "all"',
             '.Type "Normal"',
@@ -278,9 +282,9 @@ def cst_load_material(material):
             '.Epsilon "4.3"',
             '.Mu "1.0"',
             '.Kappa "0.0"',
-            '.TanD "0.025"',
-            '.TanDFreq "10.0"',
-            '.TanDGiven "True"',
+            f'.TanD "{tan_d}"',
+            f'.TanDFreq "{tan_d_freq}"',
+            f'.TanDGiven "{tan_d_given}"',
             '.TanDModel "ConstTanD"',
             '.KappaM "0.0"',
             '.TanDM "0.0"',
@@ -298,6 +302,43 @@ def cst_load_material(material):
             '.ThermalConductivity "0.3"',
             '.SetActiveMaterial "all"',
             '.Colour "0.94", "0.82", "0.76"',
+            '.Wireframe "False"',
+            '.Transparency "0"',
+            '.Create',
+            'End With',
+        ]
+    elif material == 'Rogers RT-duroid 5880 (lossy)':
+        cst_command = [
+            'With Material',
+            '.Reset',
+            '.Name "Rogers RT-duroid 5880 (lossy)"',
+            '.Folder ""',
+            '.FrqType "all"',
+            '.Type "Normal"',
+            '.SetMaterialUnit "GHz", "mm"',
+            '.Epsilon "2.2"',
+            '.Mu "1.0"',
+            '.Kappa "0.0"',
+            '.TanD "0.0009"',
+            '.TanDFreq "10.0"',
+            '.TanDGiven "True"',
+            '.TanDModel "ConstTanD"',
+            '.KappaM "0.0"',
+            '.TanDM "0.0"',
+            '.TanDMFreq "0.0"',
+            '.TanDMGiven "False"',
+            '.TanDMModel "ConstKappa"',
+            '.DispModelEps "None"',
+            '.DispModelMu "None"',
+            '.DispersiveFittingSchemeEps "General 1st"',
+            '.DispersiveFittingSchemeMu "General 1st"',
+            '.UseGeneralDispersionEps "False"',
+            '.UseGeneralDispersionMu "False"',
+            '.Rho "0.0"',
+            '.ThermalType "Normal"',
+            '.ThermalConductivity "0.20"',
+            '.SetActiveMaterial "all"',
+            '.Colour "0.75", "0.95", "0.85"',
             '.Wireframe "False"',
             '.Transparency "0"',
             '.Create',

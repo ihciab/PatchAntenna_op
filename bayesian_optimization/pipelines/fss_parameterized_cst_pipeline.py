@@ -28,8 +28,14 @@ for path in (PROJECT_ROOT, REBUILD_DIR):
         sys.path.insert(0, path_text)
 
 from bayesian_optimization.pipelines.fss_simulation_pipeline import FSSImagePreprocessor, write_instance_dict
+from bayesian_optimization.geometry.port_summary_utils import (
+    DEFAULT_FINAL_FREE_NORMAL_INWARD_PX,
+    DEFAULT_FINAL_PORT_WIDTH_SCALE,
+    ensure_port_summary_connected_to_geometry,
+)
 from bayesian_optimization.simulation.parameterized_json_to_cst import (
     ParameterizedJsonCSTBuilder,
+    generate_cst_length_annotated_svg,
     load_instance_config,
     make_unique_project_name,
 )
@@ -51,11 +57,11 @@ DEFAULT_INSTANCE_DICT: Dict[str, Any] = {
     },
     "layers": {
         "layer0": {
-            "img_path": r"D:\cst2py_box\Auto_py2cst_v0.71\test\test47.png",
+            "img_path": r"D:\cst2py_box\Auto_py2cst_v0.71\test\test50.png",
             "substrate": 0.6,
             "gnd": True,
             "col_mats": {
-                "white": "Rogers RT-duroid 5880 (loss free)",
+                "white": "Rogers RT-duroid 5880 (lossy)",
                 "gray": "PEC",
             },
         },
@@ -190,11 +196,7 @@ class FSSParameterizedCSTPipeline:
             self._log(f"repair_fig:    {repair_path}")
         self._log(f"prepared_json: {prepared_instance_path}")
 
-        self._log_header("3. Patch Port Summary")
-        port_summary_path = self._create_port_summary(repair_path, layer_cfg)
-        self._log(f"patch_port_summary:  {port_summary_path}")
-
-        self._log_header("4. Parameterization")
+        self._log_header("3. Parameterization")
         self._log(f"parameterization_mode: {self.parameterization_mode}")
         actual_parameterization_mode = self.parameterization_mode
         parameterization_status: Dict[str, Any] = {}
@@ -245,6 +247,16 @@ class FSSParameterizedCSTPipeline:
                 actual_parameterization_mode = "standard_fallback"
                 parameter_json_path = self._parameterize_repair_image(repair_path)
         self._log(f"param_json:    {parameter_json_path}")
+        cst_length_overlay = self._write_cst_length_overlay(parameter_json_path, prepared_instance_path)
+
+        self._log_header("4. Patch Port Summary")
+        raw_port_summary_path = self._create_port_summary(repair_path, layer_cfg, parameter_json_path=parameter_json_path)
+        port_summary_path, port_connection_report = self._connect_port_summary_to_parameterization(
+            parameter_json_path,
+            raw_port_summary_path,
+        )
+        self._log(f"patch_port_summary_raw:       {raw_port_summary_path}")
+        self._log(f"patch_port_summary_for_cst:   {port_summary_path}")
 
         self._log_header("5. CST Build / Simulation")
         cst_path = self._build_cst(parameter_json_path, port_summary_path)
@@ -259,9 +271,13 @@ class FSSParameterizedCSTPipeline:
             "fss_cleanup_skipped": bool(image_prep_status.get("skip_fss_cleanup")),
             "image_preparation": image_prep_status,
             "prepared_instance_json": str(prepared_instance_path),
+            "patch_port_summary_raw_json": str(raw_port_summary_path),
             "patch_port_summary_json": str(port_summary_path),
             "port_summary_json": str(port_summary_path),
+            "port_connection_report": port_connection_report,
             "parameterization_json": str(parameter_json_path),
+            "cst_length_overlay_svg": cst_length_overlay.get("annotated_svg"),
+            "cst_length_overlay_json": cst_length_overlay.get("report_json"),
             "cst_project": str(cst_path),
             "build_only": self.build_only,
             "simplify_tolerance_px": self.simplify_tolerance_px,
@@ -374,7 +390,12 @@ class FSSParameterizedCSTPipeline:
             raise FileNotFoundError(f"FSS repair image was not created: {repair_path}")
         return repair_path
 
-    def _create_port_summary(self, image_path: Path, layer_cfg: Dict[str, Any]) -> Path:
+    def _create_port_summary(
+        self,
+        image_path: Path,
+        layer_cfg: Dict[str, Any],
+        parameter_json_path: Optional[Path | str] = None,
+    ) -> Path:
         from Rebuild.PortSearch import SubjectEdgeAnalyzer
 
         # 端口分析阶段：根据 PEC 颜色寻找最接近边界的边，后续映射到 CST 端口。
@@ -397,11 +418,13 @@ class FSSParameterizedCSTPipeline:
         patch_port_result = analyzer.detect_patch_ports(
             result,
             border_distance_px=8,
+            parameterization_path=parameter_json_path,
             debug_dir=port_detection_dir,
         )
         self._log(
             "patch_port_detection: "
             f"ports={len(patch_port_result.ports)}, "
+            f"parameterization_ref={parameter_json_path or '<none>'}, "
             f"debug_dir={port_detection_dir}"
         )
 
@@ -413,6 +436,7 @@ class FSSParameterizedCSTPipeline:
             "subject_color": pec_color,
             "resolved_subject_color": result.subject_color,
             "debug_dir": str(port_detection_dir),
+            "parameterization_json": str(parameter_json_path) if parameter_json_path is not None else None,
             "ports": ports,
             "selected_port": ports[0] if ports else None,
             "port_geometries": patch_port_result.debug_metadata.get("port_geometries", []),
@@ -430,6 +454,43 @@ class FSSParameterizedCSTPipeline:
         summary_path = self.run_dir / "patch_port_summary.json"
         self._write_json(summary_path, summary)
         return summary_path
+
+    def _connect_port_summary_to_parameterization(
+        self,
+        parameter_json_path: Path,
+        port_summary_path: Path,
+    ) -> tuple[Path, Dict[str, Any]]:
+        """Create the CST-facing port summary after geometry-aware port adjustment."""
+
+        with Path(parameter_json_path).open("r", encoding="utf-8") as file:
+            parameter_payload = json.load(file)
+        with Path(port_summary_path).open("r", encoding="utf-8") as file:
+            port_summary = json.load(file)
+
+        connected_summary, report = ensure_port_summary_connected_to_geometry(
+            parameter_payload,
+            port_summary,
+            final_free_normal_inward_px=DEFAULT_FINAL_FREE_NORMAL_INWARD_PX,
+            final_port_width_scale=DEFAULT_FINAL_PORT_WIDTH_SCALE,
+        )
+
+        report_path = self.run_dir / "port_connection_report.json"
+        self._write_json(report_path, report)
+        self._log(
+            "port_connection: "
+            f"status={report.get('status')}, "
+            f"connected_after={report.get('connected_after')}, "
+            f"final_inward_px={report.get('final_free_normal_inward_px')}, "
+            f"width_scale={report.get('final_port_width_scale')}, "
+            f"report={report_path}"
+        )
+
+        if connected_summary is None:
+            return port_summary_path, report
+
+        connected_path = self.run_dir / "patch_port_summary_connected.json"
+        self._write_json(connected_path, connected_summary)
+        return connected_path, report
 
     def _parameterize_repair_image(self, repair_path: Path) -> Path:
         from Rebuild.NewParams import NewParams
@@ -745,9 +806,22 @@ class FSSParameterizedCSTPipeline:
         self._log(f"cst_name:      {config.project_name}")
         self._log(f"run_solver:    {config.run_solver}")
         self._log(f"geometry_frame:{config.geometry_frame}")
+        self._log(
+            "substrate:    "
+            f"{config.substrate_material}, thickness={config.substrate_thickness}, "
+            f"ground={config.add_ground}"
+        )
 
         builder = ParameterizedJsonCSTBuilder(parameter_json_path, config)
         return builder.build()
+
+    def _write_cst_length_overlay(self, parameter_json_path: Path, instance_json_path: Path) -> Dict[str, Any]:
+        config = load_instance_config(instance_json_path, self.layer_name)
+        config.geometry_frame = self.geometry_frame
+        config.simplify_tolerance_px = self.simplify_tolerance_px
+        report = generate_cst_length_annotated_svg(parameter_json_path, config)
+        self._log(f"cst_length_overlay: {report.get('annotated_svg')}")
+        return report
 
     def _prepared_instance(
         self,

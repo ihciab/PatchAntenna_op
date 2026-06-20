@@ -23,6 +23,7 @@ class S11Metrics:
     bandwidth_end_ghz: Optional[float]
     point_count: int
     resonant_frequencies_ghz: Tuple[float, ...] = ()
+    s11_samples: Tuple[Point, ...] = ()
 
     def to_dict(self):
         data = asdict(self)
@@ -57,6 +58,7 @@ def parse_s11_file(path: Path, target_frequency_ghz: float = 2.4, threshold_db: 
         bandwidth_end_ghz=bandwidth_end,
         point_count=len(rows),
         resonant_frequencies_ghz=resonance_frequencies,
+        s11_samples=tuple(rows),
     )
 
 

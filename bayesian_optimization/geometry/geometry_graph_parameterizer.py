@@ -604,11 +604,12 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
             "merged_count": len(removed),
             "distance_threshold_px": self.line_triplet_merge_distance_px,
             "max_angle_deg": self.line_triplet_merge_max_angle_deg,
+            "rule": "sliding_triplet_chord_error_and_angle",
             "removed_indices": removed,
         }
 
     def _should_merge_triplet(self, a: Point, b: Point, c: Point, source_span: Any = None) -> Tuple[bool, str]:
-        """Return whether b is redundant between close same-trend points a/c."""
+        """Return whether b is redundant between low-curvature points a/c."""
 
         import numpy as np
 
@@ -624,41 +625,41 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
         if d_ab <= 1e-9 or d_bc <= 1e-9:
             return True, "duplicate_or_nearly_duplicate_neighbor"
 
-        slope_sign_ab = self._slope_sign(ab)
-        slope_sign_bc = self._slope_sign(bc)
-        if slope_sign_ab != 0 and slope_sign_bc != 0 and slope_sign_ab != slope_sign_bc:
-            return False, "slope_sign_flip"
+        dot = float(np.dot(ab, bc))
+        if dot <= 0.0:
+            return False, "direction_reversal"
+
+        span = source_span if source_span is not None else np.vstack([pa, pb, pc])
+        errors = self._line_errors(span, pa, pc)
+        max_span_error = float(np.max(errors)) if len(errors) else 0.0
+        chord_error_threshold = max(
+            max(0.8, self.line_tolerance_px),
+            max(0.8, threshold),
+        )
+        has_local_micro_segment = min(d_ab, d_bc) <= max(2.0 * threshold, 2.5 * self.line_tolerance_px)
+        if has_local_micro_segment and max_span_error <= chord_error_threshold:
+            return True, "chord_aligned_micro_transition_point"
+
+        denom = max(1e-12, d_ab * d_bc)
+        cos_angle = max(-1.0, min(1.0, dot / denom))
+        angle_deg = math.degrees(math.acos(cos_angle))
+        max_angle_deg = max(0.0, self.line_triplet_merge_max_angle_deg)
+        if angle_deg > max_angle_deg:
+            return False, "angle_change_too_large"
 
         # Sliding triplet rule: check 123, then 234, then 345...
-        # For local dense points, slope sign is the corner guard; a large local
-        # angle alone should not keep a redundant point.
+        # If the middle point sits close to the A-C chord and the local tangent
+        # barely turns, it is just a noisy sample on the same straight segment.
+        if max_span_error <= chord_error_threshold:
+            return True, "chord_aligned_low_slope_change_triplet"
+
         close_triplet = (
             d_ab <= 2.0 * threshold
             and d_bc <= 2.0 * threshold
             and d_ac <= 4.0 * threshold
         )
         if close_triplet:
-            return True, "sliding_close_triplet_same_slope"
-
-        dot = float(np.dot(ab, bc))
-        if dot <= 0.0:
-            return False, "direction_reversal"
-        denom = max(1e-12, d_ab * d_bc)
-        cos_angle = max(-1.0, min(1.0, dot / denom))
-        angle_deg = math.degrees(math.acos(cos_angle))
-        if angle_deg > self.line_triplet_merge_max_angle_deg:
-            return False, "angle_change_too_large"
-
-        span = source_span if source_span is not None else np.vstack([pa, pb, pc])
-        errors = self._line_errors(span, pa, pc)
-        max_span_error = float(np.max(errors)) if len(errors) else 0.0
-        chord_error_threshold = min(
-            max(0.8, self.line_tolerance_px),
-            max(0.8, threshold),
-        )
-        has_local_micro_segment = min(d_ab, d_bc) <= max(threshold, self.line_tolerance_px)
-        if has_local_micro_segment and max_span_error <= chord_error_threshold:
-            return True, "chord_aligned_micro_start_point"
+            return True, "sliding_close_triplet_low_slope_change"
 
         return False, "not_close_or_chord_aligned_triplet"
 
@@ -940,6 +941,7 @@ class GraphBasedLocalSplineParameterizer(GeometryDrivenParameterizer):
             "merged_count": len(removed),
             "distance_threshold_px": self.line_triplet_merge_distance_px,
             "max_angle_deg": self.line_triplet_merge_max_angle_deg,
+            "rule": "sliding_triplet_chord_error_and_angle",
             "removed_points": removed,
         }
 

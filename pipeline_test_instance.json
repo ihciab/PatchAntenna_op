@@ -76,7 +76,7 @@
       "substrate": 0.6,
       "gnd": true,
       "col_mats": {
-        "white": "Rogers RT-duroid 5880 (loss free)",
+        "white": "Rogers RT-duroid 5880 (lossy)",
         "gray": "PEC"
       }
     }

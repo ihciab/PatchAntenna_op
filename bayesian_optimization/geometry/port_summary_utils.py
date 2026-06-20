@@ -13,7 +13,8 @@ DEFAULT_INWARD_PORT_OFFSET_PX = 1.0
 DEFAULT_PORT_CONNECTION_STEP_PX = 0.2
 DEFAULT_PORT_CONNECTION_TOLERANCE_PX = 0.15
 DEFAULT_PORT_CONNECTION_MAX_SHIFT_PX = 120.0
-DEFAULT_FINAL_FREE_NORMAL_INWARD_PX = 2.0
+DEFAULT_FINAL_FREE_NORMAL_INWARD_PX = 10.0
+DEFAULT_FINAL_PORT_WIDTH_SCALE = 1.50
 
 
 def find_port_summary(payload: Dict[str, Any], port_summary: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
@@ -178,6 +179,7 @@ def ensure_port_summary_connected_to_geometry(
     tolerance_px: float = DEFAULT_PORT_CONNECTION_TOLERANCE_PX,
     max_shift_px: float = DEFAULT_PORT_CONNECTION_MAX_SHIFT_PX,
     final_free_normal_inward_px: float = DEFAULT_FINAL_FREE_NORMAL_INWARD_PX,
+    final_port_width_scale: float = DEFAULT_FINAL_PORT_WIDTH_SCALE,
 ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
     """Return a per-evaluation port summary whose port reaches the curve.
 
@@ -195,6 +197,7 @@ def ensure_port_summary_connected_to_geometry(
         "tolerance_px": float(tolerance_px),
         "max_shift_px": float(max_shift_px),
         "final_free_normal_inward_px": float(final_free_normal_inward_px),
+        "final_port_width_scale": float(final_port_width_scale),
         "connected_before": False,
         "connected_after": False,
         "final_free_normal_shift_applied": False,
@@ -230,17 +233,25 @@ def ensure_port_summary_connected_to_geometry(
     tolerance = finite_positive_or_default(tolerance_px, DEFAULT_PORT_CONNECTION_TOLERANCE_PX)
     max_shift = finite_positive_or_default(max_shift_px, DEFAULT_PORT_CONNECTION_MAX_SHIFT_PX)
     final_push = nonnegative_finite_or_default(final_free_normal_inward_px, DEFAULT_FINAL_FREE_NORMAL_INWARD_PX)
+    width_scale = finite_positive_or_default(final_port_width_scale, DEFAULT_FINAL_PORT_WIDTH_SCALE)
     max_iterations = max(0, int(math.ceil(max_shift / step)))
 
     distance = distance_to_polylines(source_point, polylines)
     report["minimum_distance_before_px"] = float(distance)
     if distance <= tolerance:
         connected_summary = copy.deepcopy(summary)
+        width_report = write_port_point_to_summary(
+            connected_summary,
+            source_point,
+            final_free_normal_inward_px=final_push,
+            final_port_width_scale=width_scale,
+        )
         report["connected_before"] = True
         report["connected_after"] = True
         report["geometry_contact_point"] = [float(source_point[0]), float(source_point[1])]
         report["connected_point"] = [float(source_point[0]), float(source_point[1])]
         report["minimum_distance_after_px"] = float(distance)
+        report["port_width_adjustment"] = width_report
         report["status"] = "already_connected"
         return connected_summary, report
 
@@ -254,7 +265,12 @@ def ensure_port_summary_connected_to_geometry(
         distance = distance_to_polylines(candidate, polylines)
         if distance <= tolerance:
             connected_summary = copy.deepcopy(summary)
-            write_port_point_to_summary(connected_summary, candidate, final_free_normal_inward_px=final_push)
+            width_report = write_port_point_to_summary(
+                connected_summary,
+                candidate,
+                final_free_normal_inward_px=final_push,
+                final_port_width_scale=width_scale,
+            )
             report["connected_after"] = True
             report["geometry_contact_point"] = [float(candidate[0]), float(candidate[1])]
             report["connected_point"] = [float(candidate[0]), float(candidate[1])]
@@ -262,17 +278,24 @@ def ensure_port_summary_connected_to_geometry(
             report["shift_applied_px"] = float(shift)
             report["final_free_normal_shift_applied"] = False
             report["final_free_normal_deferred_to_cst_builder"] = final_push > 0.0
+            report["port_width_adjustment"] = width_report
             report["iterations"] = int(iteration)
             report["status"] = "connected_by_inward_shift"
             return connected_summary, report
 
     failed_summary = copy.deepcopy(summary)
-    write_port_point_to_summary(failed_summary, candidate, final_free_normal_inward_px=final_push)
+    width_report = write_port_point_to_summary(
+        failed_summary,
+        candidate,
+        final_free_normal_inward_px=final_push,
+        final_port_width_scale=width_scale,
+    )
     report["connected_point"] = [float(candidate[0]), float(candidate[1])]
     report["minimum_distance_after_px"] = float(distance_to_polylines(candidate, polylines))
     report["shift_applied_px"] = float(step * max_iterations)
     report["final_free_normal_shift_applied"] = False
     report["final_free_normal_deferred_to_cst_builder"] = final_push > 0.0
+    report["port_width_adjustment"] = width_report
     report["iterations"] = int(max_iterations)
     report["status"] = "failed_no_curve_contact_within_max_shift"
     return failed_summary, report
@@ -384,14 +407,33 @@ def write_port_point_to_summary(
     point: Point,
     *,
     final_free_normal_inward_px: float = DEFAULT_FINAL_FREE_NORMAL_INWARD_PX,
-) -> None:
+    final_port_width_scale: float = DEFAULT_FINAL_PORT_WIDTH_SCALE,
+) -> Dict[str, Any]:
     updated = [float(point[0]), float(point[1])]
+    width_scale = finite_positive_or_default(final_port_width_scale, DEFAULT_FINAL_PORT_WIDTH_SCALE)
+    width_updates: List[Dict[str, Any]] = []
     for candidate in candidate_port_dicts(summary):
         for key in ("point", "cst_contact_point", "raw_endpoint", "center"):
             if key in candidate:
                 candidate[key] = list(updated)
         if "point" not in candidate:
             candidate["point"] = list(updated)
+        for key in ("local_width", "feed_width", "width", "port_width"):
+            value = candidate.get(key)
+            try:
+                original = float(value)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(original) and original > 0.0:
+                scaled = original * width_scale
+                candidate[key] = scaled
+                width_updates.append(
+                    {
+                        "key": key,
+                        "original": float(original),
+                        "scaled": float(scaled),
+                    }
+                )
     summary["bo_port_connection_adjustment"] = {
         "point": list(updated),
         "connected_point": list(updated),
@@ -399,6 +441,13 @@ def write_port_point_to_summary(
         "step_px": DEFAULT_PORT_CONNECTION_STEP_PX,
         "final_free_normal_inward_px": float(final_free_normal_inward_px),
         "final_free_normal_applied_by": "cst_builder",
+        "final_port_width_scale": float(width_scale),
+        "width_updates": width_updates,
+    }
+    return {
+        "scale": float(width_scale),
+        "updated_field_count": len(width_updates),
+        "updates": width_updates,
     }
 
 

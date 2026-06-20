@@ -1,5 +1,37 @@
 # BO Change Log
 
+## 2026-06-18 - Multi-Stage Bayesian Optimization
+
+### Modified Files
+
+- `bayesian_optimization/optimization/multistage.py`
+- `bayesian_optimization/geometry/primitive_mutator.py`
+- `bayesian_optimization/pipelines/optimization_pipeline.py`
+- `bayesian_optimization/simulation/parameterized_json_to_cst.py`
+- `docs/bo_change_log.md`
+- `bayesian_optimization/docs/bo_change_log.md`
+
+### Summary
+
+Added an optional three-stage BO mode controlled by
+`enable_multistage_optimization`. Stage 1 samples only `global_scale_x`,
+`global_scale_y`, and `port_width_scale` for frequency locking. Stage 2 fixes
+the best Stage 1 scale values and runs the existing local shape variables.
+Stage 3 jointly fine tunes local variables and scale variables in a +/-5%
+window around the Stage 1 best. The default remains disabled, so existing
+single-stage behavior is preserved.
+
+Multi-stage evaluations also write two explicit geometry trace files:
+`mutation_stage_curve_parameterization.json` captures the sampled/scaled
+parameterization before CST handoff and repair, while
+`cst_input_curve_parameterization.json` captures the repaired payload that is
+used as the CST input alongside `curve_parameterization.json`.
+
+The CST builder now validates compact primitive endpoint continuity before
+using primitives for `ExtrudeCurve`. When port-width scaling leaves primitive
+gaps, CST handoff falls back to the closed sampled polygon to avoid projects
+that contain only substrate and ground.
+
 ## 2026-05-30 - Feature-Constrained Topology-Preserving Shape Optimization
 
 ### 修改文件

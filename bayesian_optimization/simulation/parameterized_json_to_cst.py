@@ -43,7 +43,7 @@ class CSTParametricConfig:
     component: str = "layer0"
     metal_material: str = "PEC"
     metal_thickness: float = 0.035
-    substrate_material: Optional[str] = "Rogers RT-duroid 5880 (loss free)"
+    substrate_material: Optional[str] = "Rogers RT-duroid 5880 (lossy)"
     substrate_thickness: float = 0.6
     add_ground: bool = True
     close_project: bool = False
@@ -610,19 +610,28 @@ class ParameterizedJsonCSTBuilder:
         primitives = component.get("primitives") or []
         if primitives:
             try:
-                primitive_points = self._points_from_primitives(primitives, bbox=bbox, closed=closed)
-                primitive_points = self._remove_consecutive_duplicates(primitive_points)
-                if closed:
-                    primitive_points = self._remove_trailing_closure(primitive_points)
-                    if len(primitive_points) >= 3:
-                        primitive_points.append(primitive_points[0])
-                min_points = 3 if closed else 2
-                if len(primitive_points) >= min_points:
+                continuity_gaps = self._primitive_connection_gaps(primitives, closed=closed)
+                if continuity_gaps:
+                    max_gap = max(float(gap["distance_px"]) for gap in continuity_gaps)
                     print(
-                        "[ParameterizedJsonCSTBuilder] use compact primitives: "
-                        f"{name}, primitives={len(primitives)}, points={len(primitive_points)}"
+                        "[ParameterizedJsonCSTBuilder] primitive continuity gaps detected; "
+                        f"fallback to sampled points for {name}: gaps={len(continuity_gaps)}, "
+                        f"max_gap_px={max_gap:.6g}"
                     )
-                    return self._curve_command(name=name, curve=curve, points=primitive_points, closed=closed)
+                else:
+                    primitive_points = self._points_from_primitives(primitives, bbox=bbox, closed=closed)
+                    primitive_points = self._remove_consecutive_duplicates(primitive_points)
+                    if closed:
+                        primitive_points = self._remove_trailing_closure(primitive_points)
+                        if len(primitive_points) >= 3:
+                            primitive_points.append(primitive_points[0])
+                    min_points = 3 if closed else 2
+                    if len(primitive_points) >= min_points:
+                        print(
+                            "[ParameterizedJsonCSTBuilder] use compact primitives: "
+                            f"{name}, primitives={len(primitives)}, points={len(primitive_points)}"
+                        )
+                        return self._curve_command(name=name, curve=curve, points=primitive_points, closed=closed)
             except Exception as exc:
                 print(
                     "[ParameterizedJsonCSTBuilder] primitive reconstruction failed; "
@@ -630,6 +639,46 @@ class ParameterizedJsonCSTBuilder:
                 )
 
         return self._curve_command(name=name, curve=curve, points=fallback_points, closed=closed)
+
+    def _primitive_connection_gaps(
+        self,
+        primitives: Sequence[Dict[str, Any]],
+        closed: bool,
+        tolerance_px: float = 0.25,
+    ) -> List[Dict[str, Any]]:
+        """Return primitive endpoint gaps that would make CST profile extrusion fragile."""
+
+        if len(primitives) < 2:
+            return []
+
+        raw_paths = [self._primitive_raw_points(primitive) for primitive in primitives]
+        gaps: List[Dict[str, Any]] = []
+        pair_count = len(raw_paths) if closed else len(raw_paths) - 1
+        for index in range(pair_count):
+            current = raw_paths[index]
+            following = raw_paths[(index + 1) % len(raw_paths)]
+            if len(current) < 2 or len(following) < 2:
+                continue
+            end = current[-1]
+            start = following[0]
+            distance = self._distance(end, start)
+            if distance > tolerance_px:
+                gaps.append(
+                    {
+                        "from_index": index,
+                        "to_index": (index + 1) % len(raw_paths),
+                        "distance_px": float(distance),
+                    }
+                )
+        return gaps
+
+    def _primitive_raw_points(self, primitive: Dict[str, Any]) -> List[Point]:
+        primitive_type = str(primitive.get("type", primitive.get("kind", "spline"))).lower()
+        if primitive_type == "line":
+            return self._line_primitive_points(primitive)
+        if primitive_type == "arc":
+            return self._arc_primitive_points(primitive)
+        return self._spline_primitive_points(primitive)
 
     def _points_from_primitives(
         self,
@@ -639,13 +688,7 @@ class ParameterizedJsonCSTBuilder:
     ) -> List[Point]:
         points: List[Point] = []
         for primitive in primitives:
-            primitive_type = str(primitive.get("type", primitive.get("kind", "spline"))).lower()
-            if primitive_type == "line":
-                raw_points = self._line_primitive_points(primitive)
-            elif primitive_type == "arc":
-                raw_points = self._arc_primitive_points(primitive)
-            else:
-                raw_points = self._spline_primitive_points(primitive)
+            raw_points = self._primitive_raw_points(primitive)
             if len(raw_points) < 2:
                 continue
             mapped = self._map_points_to_cst(raw_points, bbox)
@@ -791,6 +834,12 @@ class ParameterizedJsonCSTBuilder:
         return self._payload_bbox(components)
 
     def _canvas_bbox_from_payload(self) -> Optional[Tuple[float, float, float, float]]:
+        canvas = self.payload.get("canvas") or {}
+        canvas_width = self._finite_positive(canvas.get("width")) if isinstance(canvas, dict) else None
+        canvas_height = self._finite_positive(canvas.get("height")) if isinstance(canvas, dict) else None
+        if canvas_width is not None and canvas_height is not None:
+            return 0.0, 0.0, canvas_width, canvas_height
+
         svg_path = self._resolve_payload_path(self.payload.get("svg_path"))
         if svg_path is not None and svg_path.exists():
             bbox = self._svg_viewbox_bbox(svg_path)
@@ -804,6 +853,16 @@ class ParameterizedJsonCSTBuilder:
                 width, height = image_size
                 return 0.0, 0.0, float(width), float(height)
 
+        return None
+
+    @staticmethod
+    def _finite_positive(value: Any) -> Optional[float]:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if math.isfinite(number) and number > 0.0:
+            return number
         return None
 
     def _resolve_payload_path(self, raw_path: Any) -> Optional[Path]:
@@ -953,6 +1012,468 @@ class ParameterizedJsonCSTBuilder:
         if not isinstance(payload, dict):
             raise ValueError(f"Invalid JSON payload: {path}")
         return payload
+
+
+def generate_cst_dimension_report(
+    json_path: Path | str,
+    config: CSTParametricConfig,
+    output_dir: Optional[Path | str] = None,
+) -> Dict[str, Any]:
+    """Generate a CST-side millimeter report for a parameterization JSON.
+
+    The report uses the exact same bbox selection and point mapping as the CST
+    builder, so the lengths shown here match the geometry that will be sent to
+    CST.
+    """
+
+    builder = ParameterizedJsonCSTBuilder(json_path, config)
+    components = builder._components()
+    if not components:
+        raise ValueError(f"No components found in parameterization JSON: {json_path}")
+
+    frame_bbox = builder._geometry_bbox(components)
+    min_x, min_y, max_x, max_y = frame_bbox
+    frame_w = max_x - min_x
+    frame_h = max_y - min_y
+    if frame_w <= 0 or frame_h <= 0:
+        raise ValueError(f"Invalid geometry bbox: {frame_bbox}")
+
+    mm_per_px = min(float(config.size_x) / frame_w, float(config.size_y) / frame_h)
+    component_bbox = builder._payload_bbox(components)
+    comp_min_x, comp_min_y, comp_max_x, comp_max_y = component_bbox
+    comp_w = comp_max_x - comp_min_x
+    comp_h = comp_max_y - comp_min_y
+    component_mm_per_px = None
+    if comp_w > 0 and comp_h > 0:
+        component_mm_per_px = min(float(config.size_x) / comp_w, float(config.size_y) / comp_h)
+
+    json_path = Path(json_path)
+    output_dir = Path(output_dir) if output_dir is not None else json_path.parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stem = json_path.stem
+    report_json_path = output_dir / f"{stem}_cst_mm_report.json"
+    report_svg_path = output_dir / f"{stem}_cst_mm_report.svg"
+    report_png_path = output_dir / f"{stem}_cst_mm_report.png"
+
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib import image as mpimg
+        from matplotlib.patches import Rectangle
+    except Exception as exc:
+        raise RuntimeError(f"matplotlib is required for CST dimension reports: {exc}") from exc
+
+    image = None
+    image_path = builder._resolve_payload_path(builder.payload.get("trace_image_path"))
+    if image_path is not None and image_path.exists():
+        try:
+            image = mpimg.imread(str(image_path))
+        except Exception:
+            image = None
+
+    cmap = plt.get_cmap("tab20")
+    component_reports: List[Dict[str, Any]] = []
+    all_mapped_points: List[Point] = []
+
+    def _extract_path(component: Dict[str, Any], closed: bool) -> tuple[List[Point], str]:
+        primitives = component.get("primitives") or []
+        if primitives:
+            try:
+                points = builder._points_from_primitives(primitives, frame_bbox, closed=closed)
+                points = builder._remove_consecutive_duplicates(points)
+                if closed:
+                    points = builder._remove_trailing_closure(points)
+                    if len(points) >= 3:
+                        points.append(points[0])
+                if len(points) >= (3 if closed else 2):
+                    return points, "primitives"
+            except Exception:
+                pass
+        points = builder._prepare_component_points(component, closed=closed)
+        return points, "fallback"
+
+    def _mapped_point(point: Point) -> Point:
+        return builder._map_points_to_cst([point], frame_bbox)[0]
+
+    def _component_report(
+        *,
+        component_index: int,
+        component: Dict[str, Any],
+        points: List[Point],
+        mapped_points: List[Point],
+        source: str,
+        role: str,
+    ) -> Dict[str, Any]:
+        segments: List[Dict[str, Any]] = []
+        total_px = 0.0
+        total_mm = 0.0
+        if len(points) >= 2 and len(mapped_points) >= 2:
+            for segment_index, (start_px, end_px, start_mm, end_mm) in enumerate(
+                zip(points[:-1], points[1:], mapped_points[:-1], mapped_points[1:])
+            ):
+                length_px = builder._distance(start_px, end_px)
+                length_mm = builder._distance(start_mm, end_mm)
+                total_px += length_px
+                total_mm += length_mm
+                segments.append(
+                    {
+                        "segment_index": segment_index,
+                        "start_px": [start_px[0], start_px[1]],
+                        "end_px": [end_px[0], end_px[1]],
+                        "start_mm": [start_mm[0], start_mm[1]],
+                        "end_mm": [end_mm[0], end_mm[1]],
+                        "length_px": length_px,
+                        "length_mm": length_mm,
+                    }
+                )
+
+        return {
+            "component_index": component_index,
+            "role": role,
+            "closed": bool(component.get("closed", False)),
+            "source": source,
+            "point_count": len(points),
+            "segment_count": len(segments),
+            "length_px_total": total_px,
+            "length_mm_total": total_mm,
+            "segment_lengths_mm": [segment["length_mm"] for segment in segments],
+            "segments": segments,
+        }
+
+    fig, (ax_px, ax_mm) = plt.subplots(1, 2, figsize=(15.5, 7.2))
+    if image is not None:
+        ax_px.imshow(image, origin="upper")
+    for component_index, component in enumerate(components):
+        closed = bool(component.get("closed", False))
+        points, source = _extract_path(component, closed)
+        if len(points) < 2:
+            continue
+        mapped_points = builder._map_points_to_cst(points, frame_bbox)
+        component_reports.append(
+            _component_report(
+                component_index=component_index,
+                component=component,
+                points=points,
+                mapped_points=mapped_points,
+                source=source,
+                role="component",
+            )
+        )
+        all_mapped_points.extend(mapped_points)
+
+        color = cmap(component_index % 20)
+        xs = [point[0] for point in points]
+        ys = [point[1] for point in points]
+        ax_px.plot(xs, ys, color=color, linewidth=1.6)
+
+        mx = [point[0] for point in mapped_points]
+        my = [point[1] for point in mapped_points]
+        ax_mm.plot(mx, my, color=color, linewidth=1.8)
+        ax_mm.text(
+            mx[0],
+            my[0],
+            f"C{component_index}",
+            fontsize=7,
+            color=color,
+            ha="left",
+            va="bottom",
+        )
+        for segment in component_reports[-1]["segments"]:
+            start_mm = segment["start_mm"]
+            end_mm = segment["end_mm"]
+            mid_x = (start_mm[0] + end_mm[0]) / 2.0
+            mid_y = (start_mm[1] + end_mm[1]) / 2.0
+            angle = math.degrees(math.atan2(end_mm[1] - start_mm[1], end_mm[0] - start_mm[0]))
+            ax_mm.text(
+                mid_x,
+                mid_y,
+                f'{segment["length_mm"]:.2f} mm',
+                fontsize=6.5,
+                color="#111111",
+                rotation=angle,
+                rotation_mode="anchor",
+                ha="center",
+                va="center",
+                bbox={"boxstyle": "round,pad=0.12", "fc": "white", "ec": "none", "alpha": 0.75},
+            )
+
+        for hole_index, hole in enumerate(component.get("holes", []) or []):
+            if not isinstance(hole, dict):
+                continue
+            hole_closed = True
+            hole_points, source = _extract_path(hole, hole_closed)
+            if len(hole_points) < 2:
+                continue
+            hole_mapped_points = builder._map_points_to_cst(hole_points, frame_bbox)
+            component_reports.append(
+                _component_report(
+                    component_index=component_index,
+                    component=hole,
+                    points=hole_points,
+                    mapped_points=hole_mapped_points,
+                    source=source,
+                    role=f"hole_{hole_index}",
+                )
+            )
+            hx = [point[0] for point in hole_points]
+            hy = [point[1] for point in hole_points]
+            ax_px.plot(hx, hy, color=color, linewidth=1.0, linestyle="--", alpha=0.8)
+            hmx = [point[0] for point in hole_mapped_points]
+            hmy = [point[1] for point in hole_mapped_points]
+            ax_mm.plot(hmx, hmy, color=color, linewidth=1.2, linestyle="--", alpha=0.8)
+
+    if all_mapped_points:
+        mm_xs = [point[0] for point in all_mapped_points]
+        mm_ys = [point[1] for point in all_mapped_points]
+        pad_x = max(1.0, 0.04 * config.size_x)
+        pad_y = max(1.0, 0.04 * config.size_y)
+        ax_mm.set_xlim(min(mm_xs) - pad_x, max(mm_xs) + pad_x)
+        ax_mm.set_ylim(min(mm_ys) - pad_y, max(mm_ys) + pad_y)
+
+    ax_px.set_title("Input geometry in pixel space")
+    ax_px.set_aspect("equal", adjustable="box")
+    ax_px.grid(True, alpha=0.2)
+    ax_px.invert_yaxis()
+    if image is None:
+        ax_px.set_xlim(min_x, max_x)
+        ax_px.set_ylim(max_y, min_y)
+    ax_px.set_xlabel("px")
+    ax_px.set_ylabel("px")
+
+    ax_mm.set_title("Mapped CST geometry in mm")
+    ax_mm.set_aspect("equal", adjustable="box")
+    ax_mm.grid(True, alpha=0.2)
+    ax_mm.set_xlabel("mm")
+    ax_mm.set_ylabel("mm")
+    ax_mm.axhline(0.0, color="#aaaaaa", linewidth=0.7, linestyle="--")
+    ax_mm.axvline(0.0, color="#aaaaaa", linewidth=0.7, linestyle="--")
+    ax_mm.add_patch(
+        Rectangle(
+            (-float(config.size_x) / 2.0, -float(config.size_y) / 2.0),
+            float(config.size_x),
+            float(config.size_y),
+            fill=False,
+            edgecolor="#444444",
+            linewidth=0.9,
+            linestyle=":",
+        )
+    )
+
+    footer_text = (
+        f"frame bbox(px)=({min_x:.3f}, {min_y:.3f})-({max_x:.3f}, {max_y:.3f}); "
+        f"frame extent={frame_w:.3f} x {frame_h:.3f} px; "
+        f"component bbox(px)=({comp_min_x:.3f}, {comp_min_y:.3f})-({comp_max_x:.3f}, {comp_max_y:.3f})"
+    )
+    if component_mm_per_px is not None:
+        footer_text += f"; component reference scale={component_mm_per_px:.6f} mm/px"
+    else:
+        footer_text += "; component bbox invalid"
+    fig.suptitle(
+        f"CST dimension report | frame={config.geometry_frame} | scale={mm_per_px:.6f} mm/px",
+        fontsize=13,
+    )
+    fig.text(
+        0.5,
+        0.01,
+        footer_text,
+        ha="center",
+        va="bottom",
+        fontsize=8,
+    )
+    fig.tight_layout(rect=(0.0, 0.03, 1.0, 0.96))
+    fig.savefig(report_svg_path, format="svg")
+    fig.savefig(report_png_path, dpi=200)
+    plt.close(fig)
+
+    overall_mm_bbox = None
+    if all_mapped_points:
+        xs = [point[0] for point in all_mapped_points]
+        ys = [point[1] for point in all_mapped_points]
+        overall_mm_bbox = [min(xs), min(ys), max(xs), max(ys)]
+
+    report = {
+        "json_path": str(json_path.resolve()),
+        "geometry_frame": config.geometry_frame,
+        "frame_bbox_px": [min_x, min_y, max_x, max_y],
+        "frame_extent_px": [frame_w, frame_h],
+        "scale_mm_per_px": mm_per_px,
+        "component_bbox_px": [comp_min_x, comp_min_y, comp_max_x, comp_max_y],
+        "component_extent_px": [comp_w, comp_h],
+        "component_reference_scale_mm_per_px": component_mm_per_px,
+        "cst_size_mm": [float(config.size_x), float(config.size_y)],
+        "overall_mapped_bbox_mm": overall_mm_bbox,
+        "component_count": len([item for item in component_reports if item["role"] == "component"]),
+        "hole_count": len([item for item in component_reports if item["role"] != "component"]),
+        "components": component_reports,
+        "artifacts": {
+            "json": str(report_json_path),
+            "svg": str(report_svg_path),
+            "png": str(report_png_path),
+        },
+    }
+    report_json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return report
+
+
+def generate_cst_length_annotated_svg(
+    json_path: Path | str,
+    config: CSTParametricConfig,
+    output_path: Optional[Path | str] = None,
+    source_svg_path: Optional[Path | str] = None,
+) -> Dict[str, Any]:
+    """Copy the parameterization preview SVG and overlay CST-side lengths in mm."""
+
+    builder = ParameterizedJsonCSTBuilder(json_path, config)
+    components = builder._components()
+    if not components:
+        raise ValueError(f"No components found in parameterization JSON: {json_path}")
+
+    frame_bbox = builder._geometry_bbox(components)
+    min_x, min_y, max_x, max_y = frame_bbox
+    frame_w = max_x - min_x
+    frame_h = max_y - min_y
+    if frame_w <= 0 or frame_h <= 0:
+        raise ValueError(f"Invalid geometry bbox: {frame_bbox}")
+
+    scale_mm_per_px = min(float(config.size_x) / frame_w, float(config.size_y) / frame_h)
+    source_svg = Path(source_svg_path) if source_svg_path is not None else builder._resolve_payload_path(
+        builder.payload.get("svg_path")
+    )
+    if source_svg is None or not source_svg.exists():
+        raise FileNotFoundError(f"Parameterization preview SVG does not exist: {source_svg}")
+
+    output_svg = Path(output_path) if output_path is not None else source_svg.with_name(
+        f"{source_svg.stem}_cst_lengths.svg"
+    )
+    output_json = output_svg.with_suffix(".json")
+
+    segments: List[Dict[str, Any]] = []
+
+    def _segments_from_component(component: Dict[str, Any], closed: bool) -> Iterable[Tuple[Point, Point, str]]:
+        primitives = component.get("primitives") or []
+        if primitives:
+            for primitive_index, primitive in enumerate(primitives):
+                primitive_type = str(primitive.get("type", primitive.get("kind", "line"))).lower()
+                if primitive_type == "line":
+                    points = builder._line_primitive_points(primitive)
+                elif primitive_type == "arc":
+                    points = builder._arc_primitive_points(primitive)
+                else:
+                    points = builder._spline_primitive_points(primitive)
+                points = builder._remove_consecutive_duplicates(points)
+                if len(points) < 2:
+                    continue
+                for point_index, (start, end) in enumerate(zip(points[:-1], points[1:])):
+                    yield start, end, f"primitive_{primitive_index:03d}_{point_index:03d}"
+            return
+
+        points = builder._prepare_component_points(component, closed=closed)
+        if len(points) < 2:
+            return
+        for point_index, (start, end) in enumerate(zip(points[:-1], points[1:])):
+            yield start, end, f"edge_{point_index:03d}"
+
+    for component_index, component in enumerate(components):
+        closed = bool(component.get("closed", False))
+        for local_index, (start_px, end_px, source) in enumerate(_segments_from_component(component, closed)):
+            start_mm, end_mm = builder._map_points_to_cst([start_px, end_px], frame_bbox)
+            length_px = builder._distance(start_px, end_px)
+            length_mm = builder._distance(start_mm, end_mm)
+            mid_x = (start_px[0] + end_px[0]) / 2.0
+            mid_y = (start_px[1] + end_px[1]) / 2.0
+            dx = end_px[0] - start_px[0]
+            dy = end_px[1] - start_px[1]
+            angle = math.degrees(math.atan2(dy, dx))
+            if angle > 90.0:
+                angle -= 180.0
+            elif angle < -90.0:
+                angle += 180.0
+            normal_len = math.hypot(dx, dy) or 1.0
+            offset_x = -dy / normal_len * 7.0
+            offset_y = dx / normal_len * 7.0
+            segments.append(
+                {
+                    "component_index": component_index,
+                    "segment_index": len(segments),
+                    "component_local_segment_index": local_index,
+                    "source": source,
+                    "start_px": [start_px[0], start_px[1]],
+                    "end_px": [end_px[0], end_px[1]],
+                    "start_mm": [start_mm[0], start_mm[1]],
+                    "end_mm": [end_mm[0], end_mm[1]],
+                    "length_px": length_px,
+                    "length_mm": length_mm,
+                    "label_x_px": mid_x + offset_x,
+                    "label_y_px": mid_y + offset_y,
+                    "label_angle_deg": angle,
+                }
+            )
+
+    def _escape(text: Any) -> str:
+        return (
+            str(text)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+        )
+
+    label_parts = [
+        '<g id="cst-mm-length-labels" font-family="Consolas, monospace">',
+        '<style><![CDATA[',
+        '.cst-mm-label { font-size: 13px; font-weight: 700; fill: #111111; '
+        'stroke: #ffffff; stroke-width: 3.5px; paint-order: stroke fill; }',
+        '.cst-mm-legend { font-size: 13px; fill: #111111; stroke: #ffffff; '
+        'stroke-width: 3px; paint-order: stroke fill; }',
+        ']]></style>',
+        f'<text class="cst-mm-legend" x="12" y="46">CST length labels: {config.geometry_frame} frame, '
+        f'{scale_mm_per_px:.6f} mm/px</text>',
+    ]
+    for segment in segments:
+        label = f'{segment["length_mm"]:.2f} mm'
+        title = (
+            f'segment {segment["segment_index"]:03d}: '
+            f'{segment["length_px"]:.3f} px -> {segment["length_mm"]:.6f} mm'
+        )
+        label_parts.append(
+            f'<text class="cst-mm-label" x="{segment["label_x_px"]:.3f}" '
+            f'y="{segment["label_y_px"]:.3f}" text-anchor="middle" dominant-baseline="central" '
+            f'transform="rotate({segment["label_angle_deg"]:.3f} '
+            f'{segment["label_x_px"]:.3f} {segment["label_y_px"]:.3f})">'
+            f"{_escape(label)}"
+            f'<title>{_escape(title)}</title>'
+            "</text>"
+        )
+    label_parts.append("</g>")
+    overlay = "\n".join(label_parts)
+
+    svg_text = source_svg.read_text(encoding="utf-8", errors="ignore")
+    closing = "</svg>"
+    if closing not in svg_text:
+        raise ValueError(f"Invalid SVG, missing closing tag: {source_svg}")
+    annotated_svg = svg_text.replace(closing, overlay + "\n" + closing, 1)
+    output_svg.parent.mkdir(parents=True, exist_ok=True)
+    output_svg.write_text(annotated_svg, encoding="utf-8")
+
+    component_bbox = builder._payload_bbox(components)
+    report = {
+        "json_path": str(Path(json_path).resolve()),
+        "source_svg": str(source_svg),
+        "annotated_svg": str(output_svg),
+        "report_json": str(output_json),
+        "geometry_frame": config.geometry_frame,
+        "frame_bbox_px": [min_x, min_y, max_x, max_y],
+        "frame_extent_px": [frame_w, frame_h],
+        "scale_mm_per_px": scale_mm_per_px,
+        "component_bbox_px": list(component_bbox),
+        "cst_size_mm": [float(config.size_x), float(config.size_y)],
+        "segment_count": len(segments),
+        "segments": segments,
+    }
+    output_json.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return report
 
 
 def parse_args() -> argparse.Namespace:
