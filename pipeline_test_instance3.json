@@ -72,7 +72,7 @@
 
   "layers": {
     "layer0": {
-      "img_path": "D:\\cst2py_box\\Auto_py2cst_v0.71\\test\\test51.png",
+      "img_path": "D:\\cst2py_box\\Auto_py2cst_v0.71\\test\\test52.png",
       "skip_fss_cleanup": false,
       "substrate": 0.6,
       "gnd": true,
