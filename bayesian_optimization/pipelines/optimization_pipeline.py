@@ -15,6 +15,7 @@ curve_parameterization.json -> 变量采样 -> 几何变异 -> Python 几何验�
 
 import argparse
 import datetime as _datetime
+import gc
 import json
 import logging
 import math
@@ -39,6 +40,8 @@ if VERSIONED_LOCAL_PACKAGES_DIR.exists():
         sys.path.append(local_packages_text)
 
 MAX_ALLOWED_EVALUATIONS = 100
+SAVE_INTERVAL = 10
+RESTART_INTERVAL = 20
 from bayesian_optimization.geometry.primitive_analyzer import DEFAULT_CURVE_PARAMETERIZATION_MODE  # noqa: E402
 
 
@@ -563,6 +566,12 @@ class OptimizationPipeline:
             stage3_scale_delta=self.config.stage3_scale_delta,
         )
         self.optimizer = self._create_optimizer_backend()
+        self._cst_design_environment = None
+        self._cst_project = None
+        self._cst_project_path: Optional[Path] = None
+        self._cst_project_name = "persistent_study"
+        self._last_cst_variables: Dict[str, float] = {}
+        self._last_trial_cst_project_path: Optional[Path] = None
 
     def _configure_objective_profile(self):
         """Load the objective profile from the new-format instance JSON."""
@@ -598,6 +607,7 @@ class OptimizationPipeline:
             logger.info("设计变量: %s", [variable.to_dict() for variable in self.variables])
             logger.info("primitive inventory: %s", self.inventory.to_dict())
 
+            self._start_cst_session()
             self._evaluate_initial_design()
 
             no_improvement_count = 0
@@ -628,7 +638,7 @@ class OptimizationPipeline:
                 if stage is not None and stage_terms is not None:
                     self._record_stage_result(record, stage, values, stage_terms)
 
-                if record.status == "cst_failed":
+                if self._is_cst_failure_status(record.status):
                     consecutive_cst_failures += 1
                 else:
                     consecutive_cst_failures = 0
@@ -647,15 +657,18 @@ class OptimizationPipeline:
 
                 self._save_history()
                 self._save_plots()
+                self._save_cst_project_for_interval(record.evaluation)
 
                 if self._should_stop(record, no_improvement_count, consecutive_cst_failures):
                     break
+                self._restart_cst_session_if_needed(record.evaluation, record.variables)
 
             logger.info("优化结束，history: %s", self.state.history_path.resolve())
             self._save_parameter_sensitivity()
             self._save_optimization_animation()
             return self.state.run_dir
         finally:
+            self._shutdown_cst_session(save_final=True)
             close_logger(logger)
 
     def _evaluate_initial_design(self) -> Optional[EvaluationRecord]:
@@ -698,6 +711,7 @@ class OptimizationPipeline:
         """
         logger = self.state.logger
         start = time.perf_counter()
+        logger.info("[Trial %d] Start", evaluation)
         if stage is not None:
             logger.info("evaluation=%03d stage=%s variables=%s", evaluation, stage.value, variables)
         else:
@@ -885,19 +899,38 @@ class OptimizationPipeline:
         cst_project = None
         s11_metrics = None
         cst_failed = False
+        failure_status: Optional[str] = None
         error_message = None
         try:
-            cst_project = self._build_and_simulate(design_path, eval_dir, port_summary_path=port_summary_for_eval)
+            cst_project = self._build_and_simulate(
+                design_path,
+                eval_dir,
+                port_summary_path=port_summary_for_eval,
+                variables=variables,
+                evaluation=evaluation,
+            )
             if self.config.run_solver:
-                s11_path = find_latest_s11_file(eval_dir)
-                s11_metrics = parse_s11_file(s11_path, target_frequency_ghz=self.config.target_frequency_ghz)
+                try:
+                    s11_path = find_latest_s11_file(eval_dir)
+                    s11_metrics = parse_s11_file(s11_path, target_frequency_ghz=self.config.target_frequency_ghz)
+                    logger.info("[Trial %d] S11 Exported", evaluation)
+                except Exception as exc:
+                    cst_failed = True
+                    failure_status = "ResultExportFailure"
+                    error_message = str(exc)
+                    logger.exception("[Trial %d] ResultExportFailure: %s", evaluation, exc)
             else:
                 cst_failed = False
                 error_message = "solver disabled; no S11 available for objective evaluation"
         except Exception as exc:
             cst_failed = True
+            message = str(exc)
+            if "result export failed" in message.lower() or "s11" in message.lower():
+                failure_status = "ResultExportFailure"
+            else:
+                failure_status = "SimulationFailure"
             error_message = str(exc)
-            logger.exception("CST failure eval=%03d: %s", evaluation, exc)
+            logger.exception("[Trial %d] %s: %s", evaluation, failure_status, exc)
 
         objective = evaluate_objective(
             s11_metrics,
@@ -919,7 +952,7 @@ class OptimizationPipeline:
         if not self.config.run_solver and not cst_failed:
             status = "build_completed"
         elif cst_failed:
-            status = "cst_failed"
+            status = failure_status or "SimulationFailure"
         record = EvaluationRecord(
             evaluation=evaluation,
             variables=variables,
@@ -943,6 +976,7 @@ class OptimizationPipeline:
             objective.total,
             record.elapsed_seconds,
         )
+        logger.info("[Trial %d] Loss = %.6f", evaluation, objective.total)
         return record
 
     def _apply_stage_scale_to_port_summary(
@@ -1081,11 +1115,155 @@ class OptimizationPipeline:
                 best.loss,
             )
 
+    def _debug_projects_dir(self) -> Path:
+        debug_dir = self.state.run_dir / "debug_projects"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        return debug_dir
+
+    def _make_persistent_cst_config(self):
+        from bayesian_optimization.simulation.parameterized_json_to_cst import (
+            CSTParametricConfig,
+            load_instance_config,
+        )
+
+        if self.config.instance_json is not None:
+            cst_config = load_instance_config(self.config.instance_json, self.config.layer_name)
+        else:
+            cst_config = CSTParametricConfig(project_folder=self._debug_projects_dir())
+        cst_config.project_folder = self._debug_projects_dir()
+        cst_config.project_name = self._cst_project_name
+        cst_config.run_solver = bool(self.config.run_solver)
+        cst_config.simplify_tolerance_px = self.config.simplify_tolerance_px
+        cst_config.geometry_frame = self.config.geometry_frame
+        cst_config.close_project = False
+        cst_config.save_project = False
+        self._validate_cst_frequency_range(cst_config.f0, cst_config.f1)
+        return cst_config
+
+    def _start_cst_session(self) -> None:
+        self.state.logger.info(
+            "Study Start: using clean CST project per trial to preserve the previous stable solver path"
+        )
+
+    def _apply_cst_parameters(self, variables: Dict[str, float], evaluation: int) -> None:
+        # Geometry variables are already applied to the JSON before CST handoff.
+        # Do not inject BO variable names as CST parameters into the rebuilt
+        # project history; this project is geometry-regenerated, not driven by
+        # a CST parametric model.
+        self._last_cst_variables = dict(variables)
+        self.state.logger.info("[Trial %d] Parameters Updated", evaluation)
+
+    @staticmethod
+    def _is_safe_cst_parameter_name(name: str) -> bool:
+        if not name:
+            return False
+        first = name[0]
+        if not (first.isalpha() or first == "_"):
+            return False
+        return all(char.isalnum() or char == "_" for char in name)
+
+    def _save_cst_project_snapshot(self, path: Path, trial_number: Optional[int] = None) -> bool:
+        if self._cst_project is None:
+            source = self._last_trial_cst_project_path
+            if source is None or not source.exists():
+                return False
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, path)
+                source_sidecar = source.with_suffix("")
+                target_sidecar = path.with_suffix("")
+                if source_sidecar.exists() and source_sidecar.is_dir():
+                    if target_sidecar.exists():
+                        shutil.rmtree(target_sidecar)
+                    shutil.copytree(source_sidecar, target_sidecar)
+                if trial_number is not None:
+                    self.state.logger.info("[Trial %d] Project Saved", trial_number)
+                else:
+                    self.state.logger.info("Project Saved: %s", path)
+                return True
+            except Exception:
+                self.state.logger.warning("CST project copy failed: %s -> %s", source, path, exc_info=True)
+                return False
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                self._cst_project.save(path=str(path), include_results=True)
+            except TypeError:
+                self._cst_project.save(path=str(path))
+            self._cst_project_path = path
+            self._cst_project_name = path.stem
+            if trial_number is not None:
+                self.state.logger.info("[Trial %d] Project Saved", trial_number)
+            else:
+                self.state.logger.info("Project Saved: %s", path)
+            return True
+        except Exception:
+            self.state.logger.warning("CST project save failed: %s", path, exc_info=True)
+            return False
+
+    def _save_cst_project_for_interval(self, trial_number: int) -> None:
+        if trial_number <= 0 or trial_number % SAVE_INTERVAL != 0:
+            return
+        self._save_cst_project_snapshot(
+            self._debug_projects_dir() / f"trial_{trial_number:04d}.cst",
+            trial_number=trial_number,
+        )
+
+    def _restart_cst_session_if_needed(self, trial_number: int, variables: Dict[str, float]) -> None:
+        if trial_number <= 0 or trial_number % RESTART_INTERVAL != 0:
+            return
+        self.state.logger.info("[Trial %d] Restarting CST", trial_number)
+        self._save_cst_project_snapshot(
+            self._debug_projects_dir() / f"trial_{trial_number:04d}.cst",
+            trial_number=trial_number,
+        )
+        gc.collect()
+        self._apply_cst_parameters(variables, trial_number)
+        self.state.logger.info("[Trial %d] CST Restart Complete", trial_number)
+
+    def _shutdown_cst_session(self, save_final: bool = False) -> None:
+        project = self._cst_project
+        design_environment = self._cst_design_environment
+        if project is None and design_environment is None:
+            return
+
+        if save_final and project is not None:
+            self._save_cst_project_snapshot(self._debug_projects_dir() / "final_current.cst")
+
+        try:
+            if project is not None:
+                project.close()
+        except Exception:
+            self.state.logger.warning("ProjectCloseFailure: CST project close failed", exc_info=True)
+        finally:
+            try:
+                del project
+            except Exception:
+                pass
+            self._cst_project = None
+            gc.collect()
+
+        try:
+            if design_environment is not None:
+                design_environment.close()
+        except Exception:
+            self.state.logger.warning("ProjectCloseFailure: CST design environment close failed", exc_info=True)
+        finally:
+            try:
+                del design_environment
+            except Exception:
+                pass
+            self._cst_design_environment = None
+            self._cst_project_path = None
+            gc.collect()
+
     def _build_and_simulate(
         self,
         design_json: Path,
         eval_dir: Path,
         port_summary_path: Optional[Path] = None,
+        variables: Optional[Dict[str, float]] = None,
+        evaluation: int = 0,
     ) -> Path:
         """调用已有 ParameterizedJsonCSTBuilder 完成 CST 建模和可选仿真。"""
         from bayesian_optimization.simulation.parameterized_json_to_cst import (
@@ -1096,17 +1274,19 @@ class OptimizationPipeline:
 
         if self.config.instance_json is not None:
             cst_config = load_instance_config(self.config.instance_json, self.config.layer_name)
+            cst_config.project_folder = eval_dir / "cst"
+            unique_suffix = _datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            cst_config.project_name = f"optimization_eval_{design_json.parent.name}_{unique_suffix}"
+            cst_config.close_project = True
         else:
             cst_config = CSTParametricConfig(project_folder=eval_dir / "cst")
-
-        cst_config.project_folder = eval_dir / "cst"
-        unique_suffix = _datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        cst_config.project_name = f"optimization_eval_{design_json.parent.name}_{unique_suffix}"
+            unique_suffix = _datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            cst_config.project_name = f"optimization_eval_{design_json.parent.name}_{unique_suffix}"
+            cst_config.close_project = True
         cst_config.run_solver = bool(self.config.run_solver)
         cst_config.port_summary_path = port_summary_path if port_summary_path is not None else self.config.port_summary
         cst_config.simplify_tolerance_px = self.config.simplify_tolerance_px
         cst_config.geometry_frame = self.config.geometry_frame
-        cst_config.close_project = True
         self._validate_cst_frequency_range(cst_config.f0, cst_config.f1)
         self.state.logger.info(
             "CST S11 simulation frequency range: %.6g-%.6g %s",
@@ -1119,7 +1299,10 @@ class OptimizationPipeline:
             raise ValueError("run_solver=True requires --port-summary for CST port reconstruction")
 
         cst_config.project_folder.mkdir(parents=True, exist_ok=True)
+        self._apply_cst_parameters(variables or {}, evaluation)
+        self._last_trial_cst_project_path = cst_config.cst_path
         builder = ParameterizedJsonCSTBuilder(design_json, cst_config)
+        builder.set_trial_logger(self.state.logger, evaluation)
         return builder.build()
 
     def _write_cst_length_overlay(self, design_json: Path, eval_dir: Path) -> None:
@@ -1227,6 +1410,10 @@ class OptimizationPipeline:
         """
         return record.status == "invalid_geometry"
 
+    @staticmethod
+    def _is_cst_failure_status(status: str) -> bool:
+        return status in {"cst_failed", "SimulationFailure", "ResultExportFailure"}
+
     def _save_best(self, record: EvaluationRecord) -> None:
         """保存当前最优设计 JSON、record 和 S11 文件。"""
         self.state.best_record = record
@@ -1251,6 +1438,7 @@ class OptimizationPipeline:
             s11_path = Path(record.s11_metrics["s11_path"])
             if s11_path.exists():
                 shutil.copy2(s11_path, snapshot_dir / s11_path.name)
+        self._save_cst_project_snapshot(self._debug_projects_dir() / "final_best.cst")
 
     def _copy_best_visuals(self, eval_dir: Path, snapshot_dir: Path) -> None:
         """Copy high-signal visual comparison artifacts into a best snapshot.
@@ -1322,6 +1510,9 @@ class OptimizationPipeline:
                     "run_directory": "always create a timestamped unique run folder",
                     "best_designs": "save each improved best in best_designs/eval_xxx without overwriting old snapshots",
                     "latest_best_index": "best_designs/best_index.json points to the latest best snapshot",
+                    "cst_debug_projects": "save persistent CST snapshots under debug_projects/",
+                    "save_interval": SAVE_INTERVAL,
+                    "restart_interval": RESTART_INTERVAL,
                 },
                 "invalid_geometry_policy": {
                     "action": "rollback_and_continue",

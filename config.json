@@ -1,6 +1,6 @@
 {
   "cstModuleBase": {
-    "absolute_path": "D:\\CST Studio Suite 2023\\AMD64\\python_cst_libraries"
+    "absolute_path": "C:\\Program Files (x86)\\CST Studio Suite 2024\\AMD64\\python_cst_libraries"
   },
   "agent_api": {
     "API_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",

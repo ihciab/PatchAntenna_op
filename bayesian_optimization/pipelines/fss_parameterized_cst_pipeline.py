@@ -83,7 +83,7 @@ DEFAULT_INSTANCE_DICT: Dict[str, Any] = {
 # 3. BUILD_ONLY=True builds geometry only; False also starts CST solver.
 # 4. OUTPUT_ROOT stores all intermediate files from this pipeline.
 EDITOR_RUN_CONFIG: Dict[str, Any] = {
-    "INSTANCE_JSON_PATH": PROJECT_ROOT / "pipeline_test_instance2.json",
+    "INSTANCE_JSON_PATH": PROJECT_ROOT / "pipeline_test_instance.json",
     "RUN_WITH_INLINE_INSTANCE": False,
     "OUTPUT_ROOT": PROJECT_ROOT / "pipeline_runs",
     "LAYER_NAME": "layer0",

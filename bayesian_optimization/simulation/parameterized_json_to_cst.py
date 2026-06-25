@@ -50,6 +50,7 @@ class CSTParametricConfig:
     save_project: bool = True
     run_solver: bool = True
     port_summary_path: Optional[Path] = PROJECT_ROOT / "port_summary.json"
+    result_export_folder: Optional[Path] = None
     curve_method: str = "polygon"
     simplify_tolerance_px: float = 0.0
     geometry_frame: str = "svg"
@@ -80,14 +81,35 @@ class ParameterizedJsonCSTBuilder:
         self.design_environment = None
         self.cst_project = None
         self._project_closed = False
+        self._external_project = False
+        self._s11_exported = False
+        self.trial_logger = None
+        self.trial_number = None
+
+    def attach_project(self, design_environment: Any, cst_project: Any) -> None:
+        """Reuse an already opened CST project instead of opening/closing per build."""
+
+        self.design_environment = design_environment
+        self.cst_project = cst_project
+        self.modeler = cst_project.modeler
+        self._project_closed = False
+        self._external_project = True
+
+    def set_trial_logger(self, logger: Any, trial_number: int) -> None:
+        self.trial_logger = logger
+        self.trial_number = int(trial_number)
 
     def build(self) -> Path:
-        self._open_or_create_project()
-        self._load_materials()
+        if self.cst_project is None:
+            self._open_or_create_project()
 
         components = self._components()
         if not components:
             raise ValueError(f"No components found in parameterization JSON: {self.json_path}")
+
+        if self._external_project:
+            self._cleanup_previous_generated_model(components)
+        self._load_materials()
 
         bbox = self._geometry_bbox(components)
         print(f"[ParameterizedJsonCSTBuilder] geometry frame: {self.config.geometry_frame}, bbox={bbox}")
@@ -177,8 +199,15 @@ class ParameterizedJsonCSTBuilder:
         if self.config.save_project and not self._project_closed:
             self.cst_project.save()
         if self.config.close_project and not self._project_closed:
-            ch.cst_close_project(self.design_environment, self.cst_project, save_flag=self.config.save_project)
-            self._project_closed = True
+            try:
+                ch.cst_close_project(self.design_environment, self.cst_project, save_flag=self.config.save_project)
+                self._project_closed = True
+            except Exception as exc:
+                if self._s11_exported:
+                    print(f"[ParameterizedJsonCSTBuilder] project close warning after S11 export: {exc}")
+                    self._project_closed = True
+                else:
+                    raise
 
         return self.config.cst_path
 
@@ -207,6 +236,29 @@ class ParameterizedJsonCSTBuilder:
             command = ch.cst_load_material(self.config.substrate_material)
             if command:
                 self.modeler.add_to_history(f"load {self.config.substrate_material}", command)
+
+    def _cleanup_previous_generated_model(self, components: Sequence[Dict[str, Any]]) -> None:
+        commands = [
+            "On Error Resume Next",
+            'Port.Delete "1"',
+            f'Solid.Delete "{self.config.component}:substrate"',
+            f'Solid.Delete "{self.config.component}:ground"',
+        ]
+        for index, component in enumerate(components):
+            commands.append(f'Solid.Delete "{self.config.component}:param_solid_{index:03d}"')
+            for hole_index, _hole in enumerate(self._component_holes(component), start=1):
+                commands.append(
+                    f'Solid.Delete "{self.config.component}:param_hole_solid_{index:03d}_{hole_index:03d}"'
+                )
+        commands.append(f'Curve.DeleteCurve "{self.config.component}"')
+        commands.append("On Error GoTo 0")
+        try:
+            self.modeler.add_to_history(
+                "delete previous generated CST model",
+                "\n".join(commands),
+            )
+        except Exception as exc:
+            print(f"[ParameterizedJsonCSTBuilder] generated model cleanup warning: {exc}")
 
     def _add_waveguide_port(self, bbox: Tuple[float, float, float, float]) -> None:
         if self.config.port_summary_path is None:
@@ -475,36 +527,63 @@ class ParameterizedJsonCSTBuilder:
         return orientation_map[direction]
 
     def _run_solver(self) -> None:
+        if self._external_project:
+            self._delete_results()
         print("[ParameterizedJsonCSTBuilder] save project before solver")
         self.cst_project.save()
 
         print("[ParameterizedJsonCSTBuilder] start CST solver")
+        if self.trial_logger is not None and self.trial_number is not None:
+            self.trial_logger.info("[Trial %d] Solver Started", self.trial_number)
         solver = self.modeler.run_solver()
         if not solver:
             raise ValueError("CST solver failed. Please inspect the project geometry, port and mesh settings.")
 
         print("[ParameterizedJsonCSTBuilder] solver finished")
+        if self.trial_logger is not None and self.trial_number is not None:
+            self.trial_logger.info("[Trial %d] Solver Finished", self.trial_number)
+        export_folder = self.config.result_export_folder or self.config.project_folder
+        export_folder.mkdir(parents=True, exist_ok=True)
         self.modeler.add_to_history(
             f"ExportImage{self.config.cst_path.stem}",
-            ch.cst_export_pic(str(self.config.project_folder), self.config.cst_path.stem),
+            ch.cst_export_pic(str(export_folder), self.config.cst_path.stem),
         )
-        print("[ParameterizedJsonCSTBuilder] save and close project before reading results")
-        ch.cst_close_project(self.design_environment, self.cst_project, save_flag=True)
-        self._project_closed = True
-        self._export_s11()
+        self._s11_exported = self._export_s11()
+        if not self._s11_exported:
+            raise ValueError("CST result export failed: S11 data was not exported.")
 
-    def _export_s11(self) -> None:
+        if not self._external_project:
+            print("[ParameterizedJsonCSTBuilder] save and close project after reading results")
+            try:
+                ch.cst_close_project(self.design_environment, self.cst_project, save_flag=True)
+                self._project_closed = True
+            except Exception as exc:
+                print(f"[ParameterizedJsonCSTBuilder] project close warning after S11 export: {exc}")
+                self._project_closed = True
+
+    def _delete_results(self) -> None:
+        try:
+            self.modeler.add_to_history("delete results", "DeleteResults")
+            if self.trial_logger is not None and self.trial_number is not None:
+                self.trial_logger.info("[Trial %d] Results Deleted", self.trial_number)
+        except Exception as exc:
+            print(f"[ParameterizedJsonCSTBuilder] DeleteResults warning: {exc}")
+
+    def _export_s11(self) -> bool:
         try:
             project = cst.results.ProjectFile(str(self.config.cst_path), allow_interactive=True)
             s11 = project.get_3d().get_result_item(r"1D Results\S-Parameters\S1,1").get_data()
         except Exception as exc:
             print(f"[ParameterizedJsonCSTBuilder] S11 export skipped: {exc}")
-            return
+            return False
 
-        s11_path = self.config.project_folder / f"{self.config.cst_path.stem}_s11.txt"
+        export_folder = self.config.result_export_folder or self.config.project_folder
+        export_folder.mkdir(parents=True, exist_ok=True)
+        s11_path = export_folder / f"{self.config.cst_path.stem}_s11.txt"
         with s11_path.open("w", encoding="utf-8") as file:
             print(s11, file=file)
         print(f"[ParameterizedJsonCSTBuilder] S11 saved: {s11_path}")
+        return True
 
     def _resolve_port_orientation(self, ports: Dict[str, Any], p1: Point, p2: Point) -> str:
         border_sides = ports.get("closest_border_sides", [])
