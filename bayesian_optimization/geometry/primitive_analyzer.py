@@ -45,6 +45,7 @@ class PrimitiveRecord:
     end_idx: Optional[int] = None
     point_roles: List[str] = field(default_factory=list)
     bbox: Optional[Tuple[float, float, float, float]] = None
+    parent_key: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Return a JSON-safe dictionary.
@@ -122,10 +123,34 @@ def analyze_primitives(
                     bbox=point_bbox(points),
                 )
             )
+        for hole_index, hole in iter_component_holes(component):
+            points = extract_hole_points(hole)
+            if len(points) < 3:
+                continue
+            component_id = component.get("component_id", component_index + 1)
+            hole_id = hole.get("id") or hole.get("hole_id") or hole_index + 1
+            records.append(
+                PrimitiveRecord(
+                    primitive_id=f"c{component_id}_h{hole_index + 1}",
+                    type="HOLE",
+                    role="SLOT",
+                    points=points,
+                    optimization_mode="RIGID_TRANSLATION_XY",
+                    component_index=component_index,
+                    primitive_index=hole_index,
+                    source_key="holes",
+                    original_type=None,
+                    point_roles=["BOUNDARY_POINT" for _ in points],
+                    bbox=point_bbox(points),
+                    parent_key=str(hole_id),
+                )
+            )
 
     summary = {
         "primitive_count": len(records),
         "line_count": sum(1 for record in records if record.type == "LINE"),
+        "hole_count": sum(1 for record in records if record.type == "HOLE"),
+        "slot_count": sum(1 for record in records if record.role == "SLOT"),
         "bspline_count": sum(1 for record in records if record.type == "BSPLINE"),
         "curve_count": sum(1 for record in records if record.type in {"ARC", "CURVE"}),
         "linearized_curve_count": sum(1 for record in records if record.original_type in CURVE_PRIMITIVE_TYPES),
@@ -161,6 +186,14 @@ def iter_component_primitives(component: Dict[str, Any]) -> Iterable[Tuple[str, 
         for index, primitive in enumerate(component.get(source_key, []) or []):
             if isinstance(primitive, dict):
                 yield source_key, index, primitive
+
+
+def iter_component_holes(component: Dict[str, Any]) -> Iterable[Tuple[int, Dict[str, Any]]]:
+    """Iterate nested hole/slot records in a component."""
+
+    for index, hole in enumerate(component.get("holes", []) or []):
+        if isinstance(hole, dict):
+            yield index, hole
 
 
 def classify_primitive_type(primitive: Dict[str, Any]) -> str:
@@ -264,6 +297,20 @@ def extract_primitive_points(
         sampled = sample_component_range(component, primitive)
         if len(sampled) >= 2:
             points = [sampled[0], sampled[-1]]
+    return points
+
+
+def extract_hole_points(hole: Dict[str, Any]) -> List[Point]:
+    """Extract closed slot/hole boundary points for translation variables."""
+
+    points = parse_points(
+        hole.get("resampled_points")
+        or hole.get("fallback_points")
+        or hole.get("sampled_points")
+        or hole.get("points")
+    )
+    if len(points) >= 2 and distance(points[0], points[-1]) <= 1e-9:
+        points = points[:-1]
     return points
 
 
@@ -490,6 +537,8 @@ def collect_payload_points(payload: Dict[str, Any]) -> List[Point]:
                 point = parse_point(primitive.get(key))
                 if point is not None:
                     points.append(point)
+        for _, hole in iter_component_holes(component):
+            points.extend(extract_hole_points(hole))
     return points
 
 
@@ -642,6 +691,8 @@ def plot_primitive_classification(payload: Dict[str, Any], analysis: Dict[str, A
         "CURVE": "#1b9e77",
         "PORT": "#d62728",
         "FEEDLINE": "#17becf",
+        "SLOT": "#9467bd",
+        "HOLE": "#9467bd",
         "UNKNOWN": "#7f7f7f",
     }
     for component in payload.get("components", []) or []:
@@ -652,7 +703,7 @@ def plot_primitive_classification(payload: Dict[str, Any], analysis: Dict[str, A
         points = [tuple(point) for point in primitive.get("points", []) if len(point) >= 2]
         if not points:
             continue
-        color_key = primitive.get("role") if primitive.get("role") in {"PORT", "FEEDLINE"} else primitive.get("type")
+        color_key = primitive.get("role") if primitive.get("role") in {"PORT", "FEEDLINE", "SLOT"} else primitive.get("type")
         color = colors.get(str(color_key), "#7f7f7f")
         ax.plot([p[0] for p in points], [p[1] for p in points], marker="o", markersize=2.5, linewidth=1.5, color=color)
         cx, cy = centroid(points)

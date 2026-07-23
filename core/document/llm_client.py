@@ -29,7 +29,12 @@ class LLMClient:
     用于调用大模型API进行文本和图像分析
     """
     
-    def __init__(self, api_url: Optional[str] = None, api_key: Optional[str] = None):
+    def __init__(
+        self,
+        api_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        model_name: Optional[str] = None,
+    ):
         """
         初始化大模型客户端
         
@@ -79,8 +84,12 @@ class LLMClient:
         except Exception:
             pass
         
-        self.api_url = api_url
+        if model_name is None:
+            model_name = config_data.get("agent_api", {}).get("MODEL_NAME", "openai/gpt-5")
+
+        self.api_url = normalize_chat_completions_url(api_url)
         self.api_key = api_key
+        self.model_name = model_name
         
         if api_url and api_key:
             print(f"当前API_URL为：{api_url}")
@@ -121,7 +130,7 @@ class LLMClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://example.com",
-            "X-Title": "FSS-Complete-Analysis-Tool",
+            "X-OpenRouter-Title": "FSS-Complete-Analysis-Tool",
         }
         
         messages = [{"role": "user", "content": []}]
@@ -140,7 +149,7 @@ class LLMClient:
         
         # 原代码：使用阿里云视觉语言模型
         data = {
-            "model": "qwen-vl-plus",  # 使用合适的阿里云视觉语言模型
+            "model": self.model_name,
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
@@ -158,3 +167,11 @@ class LLMClient:
         except Exception as e:
             print(f"API调用错误: {e}")
             return ""
+
+
+def normalize_chat_completions_url(api_url: Optional[str]) -> str:
+    clean = str(api_url or "").strip().rstrip("/")
+    if clean.endswith("/chat/completions"):
+        return clean
+    return clean + "/chat/completions"
+

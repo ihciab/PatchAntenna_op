@@ -55,6 +55,14 @@ HIGH_LEVEL_SCALE_VARIABLES = {
     GLOBAL_SCALE_Y_VARIABLE,
     PORT_WIDTH_SCALE_VARIABLE,
 }
+STAGE4_DELTA_X_VARIABLE = "stage4_delta_x"
+STAGE4_DELTA_Y_VARIABLE = "stage4_delta_y"
+STAGE4_POINT_INDEX_VARIABLE = "stage4_point_index"
+STAGE4_TOPOLOGY_VARIABLES = {
+    STAGE4_DELTA_X_VARIABLE,
+    STAGE4_DELTA_Y_VARIABLE,
+    STAGE4_POINT_INDEX_VARIABLE,
+}
 
 
 # =============================================================================
@@ -242,6 +250,15 @@ def mutate_geometry(
     """
 
     mutated = copy.deepcopy(payload)
+    if STAGE4_DELTA_X_VARIABLE in variable_values and STAGE4_DELTA_Y_VARIABLE in variable_values:
+        apply_stage4_topology_point_move(
+            mutated,
+            variable_values,
+            port_summary=port_summary,
+            curve_parameterization_mode=curve_parameterization_mode,
+        )
+        return mutated
+
     if inventory is None:
         _, inventory = extract_design_variables(
             payload,
@@ -341,6 +358,184 @@ def mutate_geometry(
         "high_level_scaling": metadata.get("high_level_scaling"),
     }
     return mutated
+
+
+def collect_stage4_topology_points(
+    payload: Dict[str, Any],
+    port_summary: Optional[Dict[str, Any]] = None,
+    curve_parameterization_mode: str = DEFAULT_CURVE_PARAMETERIZATION_MODE,
+) -> List[Dict[str, Any]]:
+    """Collect non-port conductor contour points for Stage4 single-point moves."""
+
+    excluded: List[Point] = []
+    try:
+        analysis = analyze_primitives(
+            payload,
+            port_summary=port_summary,
+            curve_parameterization_mode=curve_parameterization_mode,
+        )
+        for primitive in analysis.get("primitives", []) or []:
+            if primitive.get("role") not in {"PORT", "FEEDLINE"}:
+                continue
+            excluded.extend(parse_points(primitive.get("points")))
+    except Exception:
+        excluded = []
+
+    selected = _collect_component_topology_points(payload, excluded=excluded)
+    if selected:
+        return selected
+    return _collect_component_topology_points(payload, excluded=[])
+
+
+def apply_stage4_topology_point_move(
+    payload: Dict[str, Any],
+    variable_values: Dict[str, float],
+    port_summary: Optional[Dict[str, Any]] = None,
+    curve_parameterization_mode: str = DEFAULT_CURVE_PARAMETERIZATION_MODE,
+) -> Dict[str, Any]:
+    """Move one eligible contour point for Stage4 local topology exploration."""
+
+    candidates = collect_stage4_topology_points(
+        payload,
+        port_summary=port_summary,
+        curve_parameterization_mode=curve_parameterization_mode,
+    )
+    metadata = payload.setdefault("optimization_metadata", {})
+    dx = float(variable_values.get(STAGE4_DELTA_X_VARIABLE, 0.0))
+    dy = float(variable_values.get(STAGE4_DELTA_Y_VARIABLE, 0.0))
+    if not candidates:
+        metadata["stage4_topology_exploration"] = {
+            "valid": False,
+            "reason": "no eligible topology points",
+            "delta_x": dx,
+            "delta_y": dy,
+            "port_and_feedline_frozen": True,
+        }
+        return payload
+
+    raw_index = int(round(float(variable_values.get(STAGE4_POINT_INDEX_VARIABLE, 0.0))))
+    point_index = raw_index % len(candidates)
+    selected = candidates[point_index]
+    original = (float(selected["point"][0]), float(selected["point"][1]))
+    moved = (original[0] + dx, original[1] + dy)
+    moved_count = _replace_matching_conductor_points(payload, original, moved)
+    sync_closed_component_point_sequences(payload)
+    update_component_bboxes(payload)
+
+    stage4_report = {
+        "valid": True,
+        "selected_point": selected["label"],
+        "selected_point_index": point_index,
+        "component_index": selected["component_index"],
+        "component_point_index": selected["point_index"],
+        "original_point": [float(original[0]), float(original[1])],
+        "moved_point": [float(moved[0]), float(moved[1])],
+        "delta_x": dx,
+        "delta_y": dy,
+        "moved_coordinate_occurrences": moved_count,
+        "candidate_point_count": len(candidates),
+        "reference": "stage3_best_payload",
+        "port_and_feedline_frozen": True,
+    }
+    metadata["stage4_topology_exploration"] = stage4_report
+    metadata["mutation"] = {
+        "variables": dict(variable_values),
+        "strategy": "stage4_single_point_topology_exploration",
+        "raw_sampled_points_optimized": True,
+        "single_control_point_offsets_enabled": True,
+        "stage4_topology_exploration": stage4_report,
+    }
+    return payload
+
+
+def _collect_component_topology_points(
+    payload: Dict[str, Any],
+    excluded: Sequence[Point],
+) -> List[Dict[str, Any]]:
+    selected: List[Dict[str, Any]] = []
+    seen = set()
+    for component_index, component in enumerate(payload.get("components", []) or []):
+        points = parse_points(component.get("resampled_points") or component.get("fallback_points") or component.get("points"))
+        if not points:
+            continue
+        limit = len(points)
+        if bool(component.get("closed", False)) and len(points) > 1 and point_distance_2d(points[0], points[-1]) <= 1e-7:
+            limit -= 1
+        for point_index, point in enumerate(points[:limit]):
+            key = (round(point[0], 6), round(point[1], 6))
+            if key in seen:
+                continue
+            if any(point_distance_2d(point, blocked) <= 1e-6 for blocked in excluded):
+                continue
+            seen.add(key)
+            selected.append(
+                {
+                    "global_index": len(selected),
+                    "label": f"Point_{len(selected)}",
+                    "component_index": component_index,
+                    "point_index": point_index,
+                    "point": [float(point[0]), float(point[1])],
+                }
+            )
+    return selected
+
+
+def _replace_matching_conductor_points(
+    value: Any,
+    original: Point,
+    moved: Point,
+    parent_key: str = "",
+    tolerance: float = 1e-6,
+) -> int:
+    """Replace all conductor point occurrences matching one original point."""
+
+    point_keys = {"start", "end", "center", "point"}
+    point_list_keys = {
+        "points",
+        "control_points",
+        "fallback_points",
+        "resampled_points",
+        "sampled_points",
+        "smoothed_points",
+        "ordered_points",
+    }
+    traversed_top_level_keys = {"nodes", "edges", "components", "constraints"}
+    skip_keys = {"bbox", "direction", "direction_histogram", "source_refs", "source", "features", "metrics"}
+    moved_point = [float(moved[0]), float(moved[1])]
+    count = 0
+
+    def matches(point: Sequence[Any]) -> bool:
+        return point_distance_2d((float(point[0]), float(point[1])), original) <= tolerance
+
+    if isinstance(value, dict):
+        for key, child in list(value.items()):
+            if parent_key == "" and key not in traversed_top_level_keys:
+                continue
+            if key in skip_keys:
+                continue
+            if key in point_keys and is_point(child) and matches(child):
+                value[key] = list(moved_point)
+                count += 1
+            elif key in point_list_keys and isinstance(child, list):
+                updated = []
+                for item in child:
+                    if is_point(item) and matches(item):
+                        updated.append(list(moved_point))
+                        count += 1
+                    else:
+                        updated.append(item)
+                value[key] = updated
+            else:
+                count += _replace_matching_conductor_points(child, original, moved, key, tolerance)
+        if {"x", "y"}.issubset(value.keys()) and _is_number(value.get("x")) and _is_number(value.get("y")):
+            if point_distance_2d((float(value["x"]), float(value["y"])), original) <= tolerance:
+                value["x"] = float(moved[0])
+                value["y"] = float(moved[1])
+                count += 1
+    elif isinstance(value, list):
+        for item in value:
+            count += _replace_matching_conductor_points(item, original, moved, parent_key, tolerance)
+    return count
 
 
 def apply_high_level_conductor_scaling(
@@ -468,6 +663,7 @@ def apply_primitive_aware_mutation(
         "iteration": int(iteration),
         "variables_used": [],
         "line_mutations": [],
+        "hole_mutations": [],
         "port_mutations": [],
         "spline_mutations": [],
         "curve_mutations": [],
@@ -498,6 +694,10 @@ def apply_primitive_aware_mutation(
             continue
         if variable_type in {"line_normal_offset", "line_length_delta", "feed_length"}:
             apply_line_mutation(mutated, primitive, variable_type, sampled_value, analysis, mutation_report)
+        elif variable_type in {"hole_translate_x", "hole_translate_y"}:
+            apply_hole_translation(mutated, primitive, variable_type, sampled_value, mutation_report)
+        elif variable_type in {"hole_resize_width", "hole_resize_height"}:
+            apply_hole_resize(mutated, primitive, variable_type, sampled_value, mutation_report)
         elif variable_type in {"port_width_delta", "port_propagation_shift"}:
             apply_port_mutation(mutated, primitive, variable_type, sampled_value, analysis, mutation_report)
         elif variable_type in {"spline_bulge", "spline_smooth_offset"}:
@@ -547,6 +747,86 @@ def apply_primitive_aware_mutation(
             output_path,
         )
     return mutated, mutation_report
+
+
+def apply_hole_translation(
+    payload: Dict[str, Any],
+    primitive: Dict[str, Any],
+    variable_type: str,
+    value: float,
+    report: Dict[str, Any],
+) -> None:
+    """Translate one slot/hole rigidly in x or y without resizing it."""
+
+    hole = hole_object(payload, primitive)
+    if hole is None:
+        return
+    if variable_type == "hole_translate_x":
+        delta = (float(value), 0.0)
+    elif variable_type == "hole_translate_y":
+        delta = (0.0, float(value))
+    else:
+        return
+
+    before = parse_points(hole.get("resampled_points") or hole.get("fallback_points") or hole.get("points"))
+    translate_hole_payload(hole, delta)
+    after = parse_points(hole.get("resampled_points") or hole.get("fallback_points") or hole.get("points"))
+    report.setdefault("hole_mutations", []).append(
+        {
+            "primitive_id": primitive.get("primitive_id"),
+            "variable_type": variable_type,
+            "value": float(value),
+            "delta": [float(delta[0]), float(delta[1])],
+            "before_bbox": list(point_bbox(before)) if before else None,
+            "after_bbox": list(point_bbox(after)) if after else None,
+        }
+    )
+
+
+def apply_hole_resize(
+    payload: Dict[str, Any],
+    primitive: Dict[str, Any],
+    variable_type: str,
+    value: float,
+    report: Dict[str, Any],
+) -> None:
+    """Resize one slot/hole symmetrically about its current bbox center."""
+
+    hole = hole_object(payload, primitive)
+    if hole is None:
+        return
+    before = parse_points(hole.get("resampled_points") or hole.get("fallback_points") or hole.get("points"))
+    if len(before) < 3:
+        return
+    before_bbox = point_bbox(before)
+    width = max(1e-9, before_bbox[2] - before_bbox[0])
+    height = max(1e-9, before_bbox[3] - before_bbox[1])
+    cx = 0.5 * (before_bbox[0] + before_bbox[2])
+    cy = 0.5 * (before_bbox[1] + before_bbox[3])
+    min_size = 0.05
+
+    if variable_type == "hole_resize_width":
+        new_width = max(min_size, width + float(value))
+        scale = (new_width / width, 1.0)
+    elif variable_type == "hole_resize_height":
+        new_height = max(min_size, height + float(value))
+        scale = (1.0, new_height / height)
+    else:
+        return
+
+    scale_hole_payload(hole, center=(cx, cy), scale=scale)
+    after = parse_points(hole.get("resampled_points") or hole.get("fallback_points") or hole.get("points"))
+    report.setdefault("hole_mutations", []).append(
+        {
+            "primitive_id": primitive.get("primitive_id"),
+            "variable_type": variable_type,
+            "value": float(value),
+            "center": [float(cx), float(cy)],
+            "scale": [float(scale[0]), float(scale[1])],
+            "before_bbox": list(before_bbox),
+            "after_bbox": list(point_bbox(after)) if after else None,
+        }
+    )
 
 
 def apply_line_mutation(
@@ -926,6 +1206,146 @@ def primitive_object(payload: Dict[str, Any], primitive: Dict[str, Any]) -> Opti
     if isinstance(index, int) and 0 <= index < len(items) and isinstance(items[index], dict):
         return items[index]
     return None
+
+
+def hole_object(payload: Dict[str, Any], primitive: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Return the live hole dictionary referenced by a HOLE/SLOT record."""
+
+    if primitive.get("source_key") != "holes" and primitive.get("type") != "HOLE":
+        return None
+    component = component_object(payload, primitive)
+    if component is None:
+        return None
+    holes = component.get("holes", []) or []
+    index = primitive.get("primitive_index")
+    if isinstance(index, int) and 0 <= index < len(holes) and isinstance(holes[index], dict):
+        return holes[index]
+    return None
+
+
+def translate_hole_payload(hole: Dict[str, Any], delta: Point) -> None:
+    """Translate every coordinate cache and line primitive inside a hole."""
+
+    for key in ("resampled_points", "fallback_points", "sampled_points", "points"):
+        values = hole.get(key)
+        if isinstance(values, list):
+            hole[key] = translate_point_list(values, delta)
+
+    for key in ("segments", "primitives"):
+        items = hole.get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if isinstance(item, dict):
+                translate_primitive_payload(item, delta)
+
+    points = parse_points(hole.get("resampled_points") or hole.get("fallback_points") or hole.get("points"))
+    if points:
+        hole["bbox"] = list(point_bbox(points))
+        hole["point_count"] = len(points)
+
+
+def scale_hole_payload(hole: Dict[str, Any], center: Point, scale: Point) -> None:
+    """Scale every coordinate cache and line primitive inside a hole."""
+
+    for key in ("resampled_points", "fallback_points", "sampled_points", "points"):
+        values = hole.get(key)
+        if isinstance(values, list):
+            hole[key] = scale_point_list(values, center, scale)
+
+    for key in ("segments", "primitives"):
+        items = hole.get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if isinstance(item, dict):
+                scale_primitive_payload(item, center, scale)
+
+    points = parse_points(hole.get("resampled_points") or hole.get("fallback_points") or hole.get("points"))
+    if points:
+        hole["bbox"] = list(point_bbox(points))
+        hole["point_count"] = len(points)
+
+
+def translate_primitive_payload(primitive: Dict[str, Any], delta: Point) -> None:
+    """Translate one primitive dictionary in place."""
+
+    for key in ("start", "end", "center"):
+        point = parse_point(primitive.get(key))
+        if point is not None:
+            primitive[key] = [point[0] + delta[0], point[1] + delta[1]]
+    for key in ("points", "fallback_points", "control_points"):
+        values = primitive.get(key)
+        if isinstance(values, list):
+            primitive[key] = translate_point_list(values, delta)
+    parameters = primitive.get("parameters")
+    if isinstance(parameters, dict):
+        for key in ("start", "end", "center"):
+            point = parse_point(parameters.get(key))
+            if point is not None:
+                parameters[key] = [point[0] + delta[0], point[1] + delta[1]]
+        for key in ("points", "control_points"):
+            values = parameters.get(key)
+            if isinstance(values, list):
+                parameters[key] = translate_point_list(values, delta)
+
+
+def scale_primitive_payload(primitive: Dict[str, Any], center: Point, scale: Point) -> None:
+    """Scale one primitive dictionary in place."""
+
+    for key in ("start", "end", "center"):
+        point = parse_point(primitive.get(key))
+        if point is not None:
+            primitive[key] = scale_point(point, center, scale)
+    for key in ("points", "fallback_points", "control_points"):
+        values = primitive.get(key)
+        if isinstance(values, list):
+            primitive[key] = scale_point_list(values, center, scale)
+    parameters = primitive.get("parameters")
+    if isinstance(parameters, dict):
+        for key in ("start", "end", "center"):
+            point = parse_point(parameters.get(key))
+            if point is not None:
+                parameters[key] = scale_point(point, center, scale)
+        for key in ("points", "control_points"):
+            values = parameters.get(key)
+            if isinstance(values, list):
+                parameters[key] = scale_point_list(values, center, scale)
+
+
+def translate_point_list(values: Sequence[Any], delta: Point) -> List[Any]:
+    """Translate a JSON point list while leaving malformed entries unchanged."""
+
+    translated: List[Any] = []
+    for value in values:
+        point = parse_point(value)
+        if point is None:
+            translated.append(value)
+        else:
+            translated.append([point[0] + delta[0], point[1] + delta[1]])
+    return translated
+
+
+def scale_point_list(values: Sequence[Any], center: Point, scale: Point) -> List[Any]:
+    """Scale a JSON point list while leaving malformed entries unchanged."""
+
+    scaled: List[Any] = []
+    for value in values:
+        point = parse_point(value)
+        if point is None:
+            scaled.append(value)
+        else:
+            scaled.append(scale_point(point, center, scale))
+    return scaled
+
+
+def scale_point(point: Point, center: Point, scale: Point) -> List[float]:
+    """Scale a point about center."""
+
+    return [
+        center[0] + (point[0] - center[0]) * scale[0],
+        center[1] + (point[1] - center[1]) * scale[1],
+    ]
 
 
 def component_object(payload: Dict[str, Any], primitive: Dict[str, Any]) -> Optional[Dict[str, Any]]:

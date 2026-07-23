@@ -1,0 +1,44 @@
+{
+  "schema_version": "design_agent_pipeline_config_v1",
+  "description": "Top-level design-agent pipeline config. Relative paths are resolved from the project root.",
+  "run_folder": {
+    "run_root": "design_agent_runs",
+    "run_prefix": "degsin_test",
+    "run_index": null
+  },
+  "input_paths": {
+    "seed_input_dir": "design_agent_runs/agents_inputs",
+    "source_run_dir": "design_agent_runs/initial_design_test",
+    "target_json": "target.json",
+    "config_path": "config.json",
+    "initial_geometry_json": null
+  },
+  "closed_loop": {
+    "iterations": 10,
+    "geometry_only": false,
+    "build_only": false,
+    "close_project": false,
+    "f0_ghz": 2.0,
+    "f1_ghz": 3.0,
+    "target_frequency_ghz": 2.45,
+    "target_s11": -15.0,
+    "target_gain": 6.0,
+    "target_bandwidth": null,
+    "s11_threshold": null,
+    "gain": null,
+    "max_geometry_repair_attempts": 5
+  },
+  "bo": {
+    "prepare_bo": true,
+    "execute_bo": true,
+    "bo_run_name": "design_agent_bo",
+    "bo_max_evaluations": 10,
+    "bo_build_only": false,
+    "bo_instance_json": null,
+    "bo_target_json": "target.json",
+    "bo_f0_ghz": 1.0,
+    "bo_f1_ghz": 5.0,
+    "optimizer_backend": "optuna",
+    "enable_multistage_optimization": false
+  }
+}

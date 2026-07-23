@@ -1,0 +1,90 @@
+{
+  "paths": {
+    "base_run_dir": "pipeline_runs/run_20260620_204145",
+    "instance_json": "pipeline_test_instance2.json",
+    "output_root": "optimization_runs"
+  },
+  "run": {
+    "run_with_editor_config": true,
+    "run_name": "bo_editor_from_beyesian_opconfig",
+    "layer_name": "layer0",
+    "max_evaluations": 150,
+    "build_only": false
+  },
+  "simulation": {
+    "frequency_unit": "GHz",
+    "f0": 9.4,
+    "f1": 10.8,
+    "target_frequency_ghz": 10.0,
+    "target_s11_db": -10.0
+  },
+  "optimizer": {
+    "backend": "optuna",
+    "random_state": 42,
+    "optuna": {
+      "n_startup_trials": 5,
+      "multivariate": false
+    },
+    "skopt": {
+      "base_estimator": "GP",
+      "acq_func": "EI"
+    }
+  },
+  "multistage": {
+    "enable": true,
+    "stage1_trials": 50,
+    "stage2_trials": 30,
+    "stage3_trials": 30,
+    "stage4_trials": 40,
+    "stage1_scale_range": [0.8, 1.2],
+    "stage3_scale_delta": 0.05,
+    "stage4_delta_px": 7.0
+  },
+  "stage_loss_weights": {
+    "stage1": {
+      "ERES": 1.0,
+      "EBW": 1.0
+    },
+    "stage2": {
+      "ERES": 0.2,
+      "EBW": 1.0
+    },
+    "stage3": {
+      "full_objective": 1.0
+    },
+    "stage4": {
+      "full_objective": 1.0
+    }
+  },
+  "objective_weights": {
+    "resonance": 4.0,
+    "resonance_count": 8.0,
+    "target_s11": 2.0,
+    "bandwidth_reward": 8.0,
+    "gain": 1.0,
+    "complexity": 0.0,
+    "curvature": 0.0,
+    "tiny_segments": 0.0,
+    "topology_instability": 0.0,
+    "invalid_geometry": 100.0,
+    "cst_failure": 80.0
+  },
+  "stopping": {
+    "convergence_threshold": 0.02,
+    "no_improvement_patience": 50,
+    "max_invalid_ratio": 0.5,
+    "max_consecutive_cst_failures": 5
+  },
+  "geometry": {
+    "simplify_tolerance_px": 1.0,
+    "geometry_frame": "svg",
+    "curve_parameterization_mode": "linearized"
+  },
+  "port_connection": {
+    "step_px": 0.2,
+    "tolerance_px": 0.15,
+    "max_shift_px": 120.0,
+    "final_free_normal_inward_px": 8.0,
+    "final_port_width_scale": 1.3
+  }
+}

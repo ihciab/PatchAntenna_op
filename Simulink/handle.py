@@ -512,12 +512,14 @@ def cst_set_planewave(normal:list=None, e_vector:list=None):
     return cst_command
 
 def cst_set_solver2f():
+    # Match the GUI "Yes" prompt by enabling tetrahedral adaptive meshing before each solver run.
     cst_command = ['With FDSolver',
                    '.Reset',
                    '.SetMethod "Tetrahedral", "General purpose"',
-                   '.OrderTet "Second"',
+                   '.OrderTet "First"',
                    '.OrderSrf "First"',
-                   '.MeshAdaptionTet "False"',
+                   '.MixedOrderTet "False"',
+                   '.MeshAdaptionTet "True"',
                    '.Stimulation "1", "All"',
                    'End With',
                     ]
@@ -602,6 +604,22 @@ def cst_waveguide_port(orientation, x1, x2, y1, y2, z1, z2):
     cst_command = join_break.join(cst_command)
     return cst_command
 
-
+def cst_discrete_port(x1, y1, z1, x2, y2, z2, port_number=1, impedance=50.0):
+    cst_command = [
+        'WCS.ActivateWCS "global"',
+        'With DiscretePort',
+        '.Reset',
+        f'.PortNumber "{port_number}"',
+        '.Type "Sparameter"',
+        f'.Point1 "{x1}", "{y1}", "{z1}"',
+        f'.Point2 "{x2}", "{y2}", "{z2}"',
+        f'.Impedance "{impedance}"',
+        '.UsePickedPoints "False"',
+        '.Monitor "False"',
+        '.Create',
+        'End With',
+    ]
+    cst_command = join_break.join(cst_command)
+    return cst_command
 
 

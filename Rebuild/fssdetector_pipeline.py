@@ -141,10 +141,6 @@ class FSSPipelineMixin:
             else:
                 max_diff = diff
 
-            # 鏈€缁堜慨琛?mask 鐢变笁閮ㄥ垎骞惰捣鏉ワ細
-            # 1. 鑱氱被绛涢€夊墠鍚庡樊寮傚緱鍒扮殑 diff_mask
-            # 2. arrow / line 鍘婚櫎闃舵淇濈暀涓嬫潵鐨勪慨琛ュ尯鍩?yolo_mask
-            # 3. 鏂囧瓧闃舵淇濈暀涓嬫潵鐨勪慨琛ュ尯鍩?pre_repair_mask
             _, diff_mask = cv2.threshold(max_diff, 50, 255, cv2.THRESH_BINARY)
             estimated_structure_region = self._estimate_structure_region(
                 resized_input,
@@ -538,7 +534,7 @@ class FSSPipelineMixin:
 
     def visualize_results(self, results):
         """
-        鍙鍖栧鐞嗙粨鏋溿€?        """
+            """
         plt.figure(figsize=(15, 10))
 
         plt.subplot(231)
@@ -576,9 +572,10 @@ class FSSPipelineMixin:
 
     def _collect_image_files(self, input_path):
         """
-        鏀堕泦杈撳叆鏂囦欢澶逛腑鐨勫彲澶勭悊鍥惧儚鏂囦欢銆?        """
+        Collect all image files from the input directory.
+        """
         if not os.path.isdir(input_path):
-            raise FileNotFoundError(f"杈撳叆鏂囦欢澶逛笉瀛樺湪: {input_path}")
+            raise FileNotFoundError(f"Input directory does not exist: {input_path}")
 
         image_files = []
         for name in sorted(os.listdir(input_path)):
@@ -592,7 +589,8 @@ class FSSPipelineMixin:
 
     def _extract_text_info(self, image_path):
         """
-        濡傛灉閰嶇疆浜?OCR 寮曟搸锛屽垯鏍规嵁褰撳墠鍥惧儚鎻愬彇鏂囨湰淇℃伅銆?        """
+        If OCR engine is configured, extract text information from the current image.
+        """
         if self.ocr_engine is None:
             return self.text_info_list
 
@@ -681,7 +679,8 @@ class FSSPipelineMixin:
 
     def _detect_single_image(self, image_path, output_folder=None, visualize=False, refresh_text_info=True):
         """
-        澶勭悊鍗曞紶鍥剧墖骞朵繚瀛樼粨鏋溿€?        """
+        Detect elements in a single image.
+        """
         if refresh_text_info:
             self._extract_text_info(image_path)
 
@@ -692,7 +691,7 @@ class FSSPipelineMixin:
 
         input_img = cv2.imread(image_path)
         if input_img is None:
-            raise FileNotFoundError(f"鍥惧儚鏂囦欢鏈壘鍒? {image_path}")
+            raise FileNotFoundError(f"Image file not found: {image_path}")
 
         valid_ocr_text_infos = self._get_valid_ocr_text_infos()
         yolo_text_detections = self.detect_elements_with_yolo(
@@ -702,14 +701,14 @@ class FSSPipelineMixin:
 
         if len(yolo_text_detections) == 0:
             print(
-                f"YOLO 鏈娴嬪埌鏂囧瓧锛岃烦杩?FSS 娓呯悊锛岀洿鎺ヨ緭鍑哄師鍥剧粰鍚庣画娴佺▼ "
-                f"(OCR={len(valid_ocr_text_infos)}锛屼粎浣滃弬鑰?"
+                f"YOLO▼ "
+                f"(OCR={len(valid_ocr_text_infos)}?"
             )
             results = [self._make_passthrough_result(input_img, yolo_text_detections)]
         else:
             print(
-                f"鏂囨湰棰勬鏌? OCR={len(valid_ocr_text_infos)}, "
-                f"YOLO-text={len(yolo_text_detections)}锛岀户缁墽琛?FSS 娓呯悊"
+                f"OCR={len(valid_ocr_text_infos)}, "
+                f"YOLO-text={len(yolo_text_detections)}"
             )
             results = self.process_edges(image_path=image_path, output_path=output_folder)
 
@@ -727,11 +726,12 @@ class FSSPipelineMixin:
 
     def detect(self, image_path, output_folder=None, visualize=False):
         """
-        缁熶竴妫€娴嬪叆鍙ｏ紝鏀寔鍗曞紶鍥剧墖鎴栧浘鐗囨枃浠跺す銆?        """
+        Detect elements in the given image or directory of images.
+        """
         if os.path.isdir(image_path):
             image_files = self._collect_image_files(image_path)
             if not image_files:
-                raise ValueError(f"鏂囦欢澶逛腑鏈壘鍒板彲澶勭悊鐨勫浘鐗? {image_path}")
+                raise ValueError(f"Input directory is empty or contains no valid image files: {image_path}")
 
             if output_folder is None:
                 folder_name = os.path.basename(os.path.normpath(image_path))
@@ -743,7 +743,7 @@ class FSSPipelineMixin:
             for single_image_path in image_files:
                 image_name_no_ext = os.path.splitext(os.path.basename(single_image_path))[0]
                 single_output_folder = os.path.join(output_folder, image_name_no_ext)
-                print(f"寮€濮嬪鐞嗗浘鐗? {single_image_path}")
+                print(f"Starting processing of image: {single_image_path}")
                 results = self._detect_single_image(
                     image_path=single_image_path,
                     output_folder=single_output_folder,
@@ -767,7 +767,9 @@ class FSSPipelineMixin:
 
     def _save_results(self, results, output_folder, image_name_no_ext, index):
         """
-        淇濆瓨澶勭悊缁撴灉鍒版寚瀹氭枃浠跺す銆?        涓嶅悓涓棿缁撴灉浼氭寜鐓х储寮曞啓鍏ヤ笉鍚岀殑瀛愮洰褰曚腑銆?        """
+        Save the processing results to the specified output folder.
+        Different intermediate results will be saved in subdirectories.
+        """
         sub_folder = os.path.join(output_folder, f"{index:03d}")
         if not os.path.exists(sub_folder):
             os.makedirs(sub_folder)

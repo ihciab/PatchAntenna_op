@@ -1,0 +1,22 @@
+{
+  "experiment": "single_patch_2.45GHz",
+
+  "target": {
+    "f0_ghz": 2.45,
+
+    "s11": {
+      "threshold_db": -15,
+      "goal": "less"
+    },
+
+    "gain": {
+      "threshold_dbi": 6.0,
+      "goal": "greater"
+    },
+
+    "bandwidth": {
+      "reference_db": -10,
+      "goal": "greater"
+    }
+  }
+}

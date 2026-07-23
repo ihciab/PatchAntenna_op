@@ -5,6 +5,7 @@ import copy
 import datetime as _datetime
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -21,6 +22,18 @@ os.environ.setdefault("LOKY_MAX_CPU_COUNT", str(max(1, os.cpu_count() or 1)))
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 REBUILD_DIR = PROJECT_ROOT / "Rebuild"
+PDF_ANALYSIS_AGENT_ROOT = next(
+    (
+        path
+        for path in (
+            PROJECT_ROOT / "PDF_analy_agent",
+            PROJECT_ROOT / "PDFanalyagent",
+            PROJECT_ROOT / "test3",
+        )
+        if (path / "agent").exists()
+    ),
+    PROJECT_ROOT / "PDF_analy_agent",
+)
 
 for path in (PROJECT_ROOT, REBUILD_DIR):
     path_text = str(path)
@@ -57,7 +70,7 @@ DEFAULT_INSTANCE_DICT: Dict[str, Any] = {
     },
     "layers": {
         "layer0": {
-            "img_path": r"D:\cst2py_box\Auto_py2cst_v0.71\test\test50.png",
+            "img_path": r"D:\cst2py_box\Auto_py2cst_v0.71\test\test51.png",
             "substrate": 0.6,
             "gnd": True,
             "col_mats": {
@@ -83,7 +96,7 @@ DEFAULT_INSTANCE_DICT: Dict[str, Any] = {
 # 3. BUILD_ONLY=True builds geometry only; False also starts CST solver.
 # 4. OUTPUT_ROOT stores all intermediate files from this pipeline.
 EDITOR_RUN_CONFIG: Dict[str, Any] = {
-    "INSTANCE_JSON_PATH": PROJECT_ROOT / "pipeline_test_instance.json",
+    "INSTANCE_JSON_PATH": PROJECT_ROOT / "pipeline_test_instance3.json",
     "RUN_WITH_INLINE_INSTANCE": False,
     "OUTPUT_ROOT": PROJECT_ROOT / "pipeline_runs",
     "LAYER_NAME": "layer0",
@@ -104,7 +117,51 @@ EDITOR_RUN_CONFIG: Dict[str, Any] = {
     "LINE_TRIPLET_MERGE_MAX_ANGLE_DEG": 35.0,
     "REUSE_PROJECT_FOLDER": False,
     "REUSE_PROJECT_NAME": False,
+    # 流程展示用：先运行 prompt/model 抽取脚本，只展示控制台输出。
+    # 该步骤结束后会继续执行本文件原本的 CST pipeline，不读取抽取结果。
+    "RUN_PRE_PROMPT_EXTRACTION": True,
+    "PRE_PROMPT_PYTHON_EXE": Path(r"D:\Python\python.exe"),
+    "PRE_PROMPT_SCRIPT": PROJECT_ROOT / "design_agent" / "scripts" / "run_antenna_agent.py",
+    "PRE_PROMPT_ROOT": PDF_ANALYSIS_AGENT_ROOT
+    / "Antenna PDF"
+    / "Single-Layer Line-Fed Broadband Microstrip Patch Antenna on",
 }
+
+
+def run_pre_prompt_extraction(
+    *,
+    enabled: bool,
+    python_exe: Path | str,
+    script_path: Path | str,
+    paper_root: Path | str,
+) -> None:
+    """Run the prompt extraction demo step and stream its console output."""
+    if not enabled:
+        print("[FSSParameterizedCSTPipeline] pre prompt extraction skipped")
+        return
+
+    python_exe = Path(python_exe)
+    script_path = Path(script_path)
+    paper_root = Path(paper_root)
+    command = [str(python_exe), str(script_path), "--root", str(paper_root)]
+
+    print("\n" + "=" * 78)
+    print("[FSSParameterizedCSTPipeline] 0. Pre Prompt Extraction Demo")
+    print("=" * 78)
+    print(f"[FSSParameterizedCSTPipeline] command: {' '.join(command)}")
+    print("[FSSParameterizedCSTPipeline] streaming prompt extraction output below...")
+
+    try:
+        result = subprocess.run(command, cwd=str(PROJECT_ROOT), check=False)
+    except OSError as exc:
+        print(f"[FSSParameterizedCSTPipeline] pre prompt extraction could not start: {exc}")
+        print("[FSSParameterizedCSTPipeline] continuing with original CST pipeline.")
+        return
+
+    print(
+        "[FSSParameterizedCSTPipeline] pre prompt extraction finished "
+        f"with returncode={result.returncode}; continuing with original CST pipeline."
+    )
 
 
 class FSSParameterizedCSTPipeline:
@@ -373,9 +430,22 @@ class FSSParameterizedCSTPipeline:
     def _clean_layer_image(self, layer_cfg: Dict[str, Any]) -> Path:
         # 图片清洗阶段：复用 FSSfigDetector，最终只使用 repair_fig.png。
         # Cleanup stage: use FSSfigDetector and keep repair_fig.png only.
+        from Rebuild.FssDetector_2 import FSSfigDetector as FSSfigDetectorV2
+        from Rebuild.fssdetector_ocr import TextSystemOCRAdapter
+
+        ocr = TextSystemOCRAdapter(project_dir=str(PROJECT_ROOT))
+        detector = FSSfigDetectorV2(
+            max_k=6,
+            min_color_diff=30,
+            ocr_engine=ocr,
+            yolo_model_path=str(PROJECT_ROOT / "models" / "bestyolo.pt"),
+        )
+        self._log("FSS cleanup detector: Rebuild.FssDetector_2.FSSfigDetector")
         preprocessor = FSSImagePreprocessor(
             output_root=self.clean_dir,
             result_name="repair_fig.png",
+            detector=detector,
+            normalize_for_simulation=False,
         )
         repair_path = Path(
             preprocessor.process_image(
@@ -1325,6 +1395,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Use Instance from instance JSON exactly instead of appending a timestamp.",
     )
+    parser.add_argument(
+        "--skip-pre-prompt-extraction",
+        action="store_true",
+        help="Skip the demonstration pre-run of design_agent/scripts/run_antenna_agent.py.",
+    )
     return parser.parse_args()
 
 
@@ -1338,6 +1413,15 @@ def main() -> None:
             raise ValueError("Please pass --instance-json or use --use-inline-instance.")
         instance_json = args.instance_json
         inline_instance = None
+
+    run_pre_prompt_extraction(
+        enabled=not args.skip_pre_prompt_extraction,
+        python_exe=Path(r"D:\Python\python.exe"),
+        script_path=PROJECT_ROOT / "design_agent" / "scripts" / "run_antenna_agent.py",
+        paper_root=PDF_ANALYSIS_AGENT_ROOT
+        / "Antenna PDF"
+        / "Single-Layer Line-Fed Broadband Microstrip Patch Antenna on",
+    )
 
     pipeline = FSSParameterizedCSTPipeline(
         instance_json=instance_json,
@@ -1368,6 +1452,21 @@ def run_from_editor_config() -> None:
     use_inline = bool(EDITOR_RUN_CONFIG["RUN_WITH_INLINE_INSTANCE"])
     instance_json = None if use_inline else EDITOR_RUN_CONFIG["INSTANCE_JSON_PATH"]
     inline_instance = DEFAULT_INSTANCE_DICT if use_inline else None
+
+    run_pre_prompt_extraction(
+        enabled=bool(EDITOR_RUN_CONFIG.get("RUN_PRE_PROMPT_EXTRACTION", True)),
+        python_exe=EDITOR_RUN_CONFIG.get("PRE_PROMPT_PYTHON_EXE", r"D:\Python\python.exe"),
+        script_path=EDITOR_RUN_CONFIG.get(
+            "PRE_PROMPT_SCRIPT",
+            PROJECT_ROOT / "design_agent" / "scripts" / "run_antenna_agent.py",
+        ),
+        paper_root=EDITOR_RUN_CONFIG.get(
+            "PRE_PROMPT_ROOT",
+            PDF_ANALYSIS_AGENT_ROOT
+            / "Antenna PDF"
+            / "Single-Layer Line-Fed Broadband Microstrip Patch Antenna on",
+        ),
+    )
 
     pipeline = FSSParameterizedCSTPipeline(
         instance_json=instance_json,

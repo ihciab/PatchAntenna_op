@@ -12,6 +12,7 @@ models/
 
 # Generated outputs
 runs/
+design_agent_runs/
 optimization_runs/
 pipeline_runs/
 results/
@@ -19,4 +20,8 @@ debug_pixel/
 
 # Local temp/cache folders
 .codex_tmp/
+PDF_analy_agent/
+agenttest
+design_agent_test*
+design_agent/scripts/*test*.py
 

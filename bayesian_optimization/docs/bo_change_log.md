@@ -1,5 +1,60 @@
 # BO Change Log
 
+## 2026-07-11 - Central Bayesian Optimization Config
+
+### Modified Files
+
+- `beyesian_opconfig.json`
+- `bayesian_optimization/pipelines/optimization_pipeline.py`
+- `bayesian_optimization/optimization/multistage.py`
+- `docs/bo_change_log.md`
+- `bayesian_optimization/docs/bo_change_log.md`
+
+### Summary
+
+Added a root-level `beyesian_opconfig.json` file for the main BO run settings.
+It contains the CST S11 frequency range, stage trial counts, stage loss
+weights, full objective weights, optimizer hyperparameters, stopping settings,
+geometry settings, and port-connection parameters.
+
+The editor-run pipeline now merges this JSON into the legacy editor config. The
+configured frequency range is applied to the CST builder config, so the current
+`9.4-10.8 GHz` range is used by simulation. Stage objective weights are now
+configurable through `stage_loss_weights`, and Optuna/skopt hyperparameters can
+be adjusted without editing Python code.
+
+## 2026-07-09 - Stage4 Topology Exploration
+
+### Modified Files
+
+- `bayesian_optimization/optimization/multistage.py`
+- `bayesian_optimization/geometry/primitive_mutator.py`
+- `bayesian_optimization/pipelines/optimization_pipeline.py`
+- `docs/bo_change_log.md`
+- `bayesian_optimization/docs/bo_change_log.md`
+
+### Summary
+
+Added an optional Stage4 local-escape phase after Stage1-Stage3 multi-stage
+optimization. Stage4 freezes global electrical scale, port size, port position,
+feedline width, and feedline position, then moves exactly one eligible conductor
+contour point per trial using `stage4_delta_x` and `stage4_delta_y`.
+
+Stage4 uses the best successful Stage3 payload as its non-cumulative reference.
+The selected point is scheduled cyclically by `StageManager`; Optuna only
+samples the point move in the bounded `[-stage4_delta_px, +stage4_delta_px]`
+window. The default editor configuration uses `STAGE4_TRIALS = 20` and
+`STAGE4_DELTA_PX = 7.0`.
+
+Automatic CST geometry repair is disabled in Stage4. Invalid geometry,
+duplicate vertices, broken segments, and validation failures skip CST
+build/simulation and return the invalid-geometry penalty. Valid Stage4 trials
+use the full Stage3 objective terms and write logs for the selected point,
+move vector, geometry validity, ERES, EBW, and loss.
+
+Stage4 is controlled by `stage4_trials`; setting it to `0` restores the earlier
+three-stage multi-stage behavior.
+
 ## 2026-06-18 - Multi-Stage Bayesian Optimization
 
 ### Modified Files

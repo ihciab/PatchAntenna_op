@@ -32,10 +32,11 @@ for path in (PROJECT_ROOT, REBUILD_DIR):
 
 
 class FSSImagePreprocessor:
-    def __init__(self, output_root, detector=None, result_name="repair_fig.png"):
+    def __init__(self, output_root, detector=None, result_name="repair_fig.png", normalize_for_simulation=True):
         self.output_root = Path(output_root)
         self.result_name = result_name
         self.detector = detector
+        self.normalize_for_simulation = bool(normalize_for_simulation)
         self.yolo_model_path = PROJECT_ROOT / "models" / "bestyolo.pt"
         self.yolo_text_labels = ("text",)
         self.yolo_text_class_id = 1
@@ -126,8 +127,12 @@ class FSSImagePreprocessor:
             )
             return str(processed_path)
 
-        self._normalize_repair_fig_for_simulation(processed_path, col_mats)
-        self.last_status["normalization_applied"] = True
+        if self.normalize_for_simulation:
+            self._normalize_repair_fig_for_simulation(processed_path, col_mats)
+            self.last_status["normalization_applied"] = True
+        else:
+            self.last_status["normalization_applied"] = False
+            self.last_status["normalization_skipped_reason"] = "disabled_by_pipeline"
         return str(processed_path)
 
     def _precheck_yolo_text(self, image_path):

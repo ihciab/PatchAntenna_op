@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+BAYESIAN_OPCONFIG_PATH = PROJECT_ROOT / "beyesian_opconfig.json"
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 os.environ.setdefault("MPLBACKEND", "Agg")
@@ -39,7 +40,7 @@ if VERSIONED_LOCAL_PACKAGES_DIR.exists():
     if local_packages_text not in sys.path:
         sys.path.append(local_packages_text)
 
-MAX_ALLOWED_EVALUATIONS = 100
+MAX_ALLOWED_EVALUATIONS = 300
 SAVE_INTERVAL = 10
 RESTART_INTERVAL = 20
 from bayesian_optimization.geometry.primitive_analyzer import DEFAULT_CURVE_PARAMETERIZATION_MODE  # noqa: E402
@@ -59,9 +60,9 @@ EDITOR_RUN_CONFIG: Dict[str, Any] = {
     "BASE_RUN_DIR": PROJECT_ROOT / "pipeline_runs" / "run_20260620_204145",
     "INSTANCE_JSON_PATH": PROJECT_ROOT / "pipeline_test_instance2.json",
     "OUTPUT_ROOT": PROJECT_ROOT / "optimization_runs",
-    "RUN_NAME": "bo_editor_full100_stage1_50",
+    "RUN_NAME": "bo_editor_full300_stage4",
     "LAYER_NAME": "layer0",
-    "MAX_EVALUATIONS": 100,
+    "MAX_EVALUATIONS": 120,
     "TARGET_FREQUENCY_GHZ": 10.0,
     "TARGET_S11_DB": -10.0,
     "CONVERGENCE_THRESHOLD": 0.02,
@@ -78,9 +79,11 @@ EDITOR_RUN_CONFIG: Dict[str, Any] = {
     # "skopt": 强制使用 scikit-optimize GP/EI。
     "ENABLE_MULTISTAGE_OPTIMIZATION": True,
     "STAGE1_TRIALS": 50,
-    "STAGE3_TRIALS": 20,
+    "STAGE3_TRIALS": 30,
+    "STAGE4_TRIALS": 40,
     "STAGE1_SCALE_RANGE": (0.80, 1.20),
     "STAGE3_SCALE_DELTA": 0.05,
+    "STAGE4_DELTA_PX": 7.0,
     "OPTIMIZER_BACKEND": "optuna",
 }
 
@@ -91,11 +94,16 @@ from bayesian_optimization.geometry.geometry_validator import (  # noqa: E402
     make_topology_signature,
     validate_geometry,
 )
-from bayesian_optimization.geometry.geometry_validation import validate_geometry as validate_and_repair_cst_geometry  # noqa: E402
+from bayesian_optimization.geometry.geometry_validation import (  # noqa: E402
+    GeometryValidationConfig as CSTGeometryValidationConfig,
+    GeometryValidator as CSTGeometryValidator,
+    validate_geometry as validate_and_repair_cst_geometry,
+)
 from bayesian_optimization.geometry.port_summary_utils import ensure_port_summary_connected_to_geometry  # noqa: E402
 from bayesian_optimization.geometry.primitive_mutator import (  # noqa: E402
     DesignVariable,
     PrimitiveInventory,
+    collect_stage4_topology_points,
     extract_design_variables,
     mutate_geometry,
 )
@@ -109,6 +117,9 @@ from bayesian_optimization.optimization.multistage import (  # noqa: E402
     GLOBAL_SCALE_X,
     GLOBAL_SCALE_Y,
     PORT_WIDTH_SCALE,
+    STAGE4_DELTA_X,
+    STAGE4_DELTA_Y,
+    STAGE4_POINT_INDEX,
     OptimizationStage,
     StageManager,
     compute_stage_objective_terms,
@@ -258,14 +269,26 @@ class OptunaBackend:
     """Optuna TPESampler 后端封装，向主循环提供 ask/tell 接口。"""
     name = "optuna_tpe"
 
-    def __init__(self, random_state: int, max_evaluations: int) -> None:
+    def __init__(
+        self,
+        random_state: int,
+        max_evaluations: int,
+        n_startup_trials: Optional[int] = None,
+        multivariate: bool = False,
+    ) -> None:
         """初始化 Optuna study。"""
         import optuna
 
+        startup_trials = (
+            int(n_startup_trials)
+            if n_startup_trials is not None
+            else min(5, max(1, max_evaluations // 3))
+        )
+
         sampler = optuna.samplers.TPESampler(
             seed=random_state,
-            n_startup_trials=min(5, max(1, max_evaluations // 3)),
-            multivariate=False,
+            n_startup_trials=max(1, startup_trials),
+            multivariate=bool(multivariate),
         )
         optuna.logging.set_verbosity(optuna.logging.WARNING)
         self.study = optuna.create_study(direction="minimize", sampler=sampler)
@@ -309,7 +332,7 @@ class SkoptBackend:
     """scikit-optimize GP/EI 后端封装，作为 Optuna 不可用时的回退。"""
     name = "skopt_gp_ei"
 
-    def __init__(self, random_state: int) -> None:
+    def __init__(self, random_state: int, base_estimator: str = "GP", acq_func: str = "EI") -> None:
         """初始化 skopt 依赖，并延迟创建 Optimizer 实例。"""
         from skopt import Optimizer
         from skopt.space import Real
@@ -317,6 +340,8 @@ class SkoptBackend:
         self._optimizer_cls = Optimizer
         self._real_cls = Real
         self.random_state = random_state
+        self.base_estimator = str(base_estimator)
+        self.acq_func = str(acq_func)
         self.optimizer = None
         self._trials: List[Dict[str, Any]] = []
 
@@ -331,8 +356,8 @@ class SkoptBackend:
 #--------------------------------------------------------------------------------------------------------------------------------------
             self.optimizer = self._optimizer_cls(
                 dimensions=dimensions,
-                base_estimator="GP",
-                acq_func="EI",
+                base_estimator=self.base_estimator,
+                acq_func=self.acq_func,
                 random_state=self.random_state,
             )
         point = self.optimizer.ask()
@@ -373,6 +398,9 @@ class OptimizationConfig:
     port_summary: Optional[Path] = None
     layer_name: str = "layer0"
     max_evaluations: int = MAX_ALLOWED_EVALUATIONS
+    simulation_f0_ghz: Optional[float] = None
+    simulation_f1_ghz: Optional[float] = None
+    simulation_frequency_unit: str = "GHz"
     target_frequency_ghz: float = 2.4
     target_s11_db: float = -10.0
     convergence_threshold: float = 0.02
@@ -385,11 +413,20 @@ class OptimizationConfig:
     curve_parameterization_mode: str = DEFAULT_CURVE_PARAMETERIZATION_MODE
     random_state: int = 42
     optimizer_backend: str = "auto"
+    optuna_n_startup_trials: Optional[int] = None
+    optuna_multivariate: bool = False
+    skopt_base_estimator: str = "GP"
+    skopt_acq_func: str = "EI"
+    objective_weights: Dict[str, float] = field(default_factory=dict)
+    stage_loss_weights: Dict[str, Dict[str, float]] = field(default_factory=dict)
     enable_multistage_optimization: bool = False
     stage1_trials: int = 50
+    stage2_trials: Optional[int] = None
     stage3_trials: int = 20
+    stage4_trials: int = 20
     stage1_scale_range: tuple[float, float] = (0.80, 1.20)
     stage3_scale_delta: float = 0.05
+    stage4_delta_px: float = 7.0
     port_connection_step_px: float = 0.2
     port_connection_tolerance_px: float = 0.15
     port_connection_max_shift_px: float = 120.0
@@ -447,6 +484,127 @@ def write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as file:
         json.dump(payload, file, ensure_ascii=False, indent=2)
+
+
+def load_beyesian_opconfig(path: Path = BAYESIAN_OPCONFIG_PATH) -> Dict[str, Any]:
+    """Load the optional root-level Bayesian optimization config."""
+
+    if not path.exists():
+        return {}
+    return load_json(path)
+
+
+def build_objective_weights(overrides: Optional[Dict[str, Any]]) -> ObjectiveWeights:
+    """Build objective weights from JSON overrides with typo protection."""
+
+    defaults = ObjectiveWeights()
+    if not overrides:
+        return defaults
+    known = defaults.to_dict()
+    unknown = sorted(set(overrides) - set(known))
+    if unknown:
+        raise ValueError(f"unknown objective weight keys in beyesian_opconfig.json: {unknown}")
+    values = dict(known)
+    for key, value in overrides.items():
+        values[key] = float(value)
+    return ObjectiveWeights(**values)
+
+
+def merge_editor_config_with_beyesian_opconfig(
+    editor_config: Dict[str, Any],
+    opconfig_path: Path = BAYESIAN_OPCONFIG_PATH,
+) -> Dict[str, Any]:
+    """Merge root-level beyesian_opconfig.json into the legacy editor config."""
+
+    opconfig = load_beyesian_opconfig(opconfig_path)
+    merged = dict(editor_config)
+    if not opconfig:
+        return merged
+
+    paths = _dict_value(opconfig, "paths")
+    run = _dict_value(opconfig, "run")
+    simulation = _dict_value(opconfig, "simulation")
+    optimizer = _dict_value(opconfig, "optimizer")
+    optuna = _dict_value(optimizer, "optuna")
+    skopt = _dict_value(optimizer, "skopt")
+    multistage = _dict_value(opconfig, "multistage")
+    stopping = _dict_value(opconfig, "stopping")
+    geometry = _dict_value(opconfig, "geometry")
+    port_connection = _dict_value(opconfig, "port_connection")
+
+    _assign_path(merged, "BASE_RUN_DIR", paths.get("base_run_dir"))
+    _assign_path(merged, "INSTANCE_JSON_PATH", paths.get("instance_json"))
+    _assign_path(merged, "OUTPUT_ROOT", paths.get("output_root"))
+
+    _assign(merged, "RUN_WITH_EDITOR_CONFIG", run.get("run_with_editor_config"))
+    _assign(merged, "RUN_NAME", run.get("run_name"))
+    _assign(merged, "LAYER_NAME", run.get("layer_name"))
+    _assign(merged, "MAX_EVALUATIONS", run.get("max_evaluations"))
+    _assign(merged, "BUILD_ONLY", run.get("build_only"))
+
+    _assign(merged, "SIMULATION_F0_GHZ", simulation.get("f0"))
+    _assign(merged, "SIMULATION_F1_GHZ", simulation.get("f1"))
+    _assign(merged, "SIMULATION_FREQUENCY_UNIT", simulation.get("frequency_unit"))
+    _assign(merged, "TARGET_FREQUENCY_GHZ", simulation.get("target_frequency_ghz"))
+    _assign(merged, "TARGET_S11_DB", simulation.get("target_s11_db"))
+
+    _assign(merged, "OPTIMIZER_BACKEND", optimizer.get("backend"))
+    _assign(merged, "RANDOM_STATE", optimizer.get("random_state"))
+    _assign(merged, "OPTUNA_N_STARTUP_TRIALS", optuna.get("n_startup_trials"))
+    _assign(merged, "OPTUNA_MULTIVARIATE", optuna.get("multivariate"))
+    _assign(merged, "SKOPT_BASE_ESTIMATOR", skopt.get("base_estimator"))
+    _assign(merged, "SKOPT_ACQ_FUNC", skopt.get("acq_func"))
+
+    _assign(merged, "ENABLE_MULTISTAGE_OPTIMIZATION", multistage.get("enable"))
+    _assign(merged, "STAGE1_TRIALS", multistage.get("stage1_trials"))
+    _assign(merged, "STAGE2_TRIALS", multistage.get("stage2_trials"))
+    _assign(merged, "STAGE3_TRIALS", multistage.get("stage3_trials"))
+    _assign(merged, "STAGE4_TRIALS", multistage.get("stage4_trials"))
+    _assign(merged, "STAGE1_SCALE_RANGE", multistage.get("stage1_scale_range"))
+    _assign(merged, "STAGE3_SCALE_DELTA", multistage.get("stage3_scale_delta"))
+    _assign(merged, "STAGE4_DELTA_PX", multistage.get("stage4_delta_px"))
+
+    _assign(merged, "OBJECTIVE_WEIGHTS", opconfig.get("objective_weights"))
+    _assign(merged, "STAGE_LOSS_WEIGHTS", opconfig.get("stage_loss_weights"))
+
+    _assign(merged, "CONVERGENCE_THRESHOLD", stopping.get("convergence_threshold"))
+    _assign(merged, "NO_IMPROVEMENT_PATIENCE", stopping.get("no_improvement_patience"))
+    _assign(merged, "MAX_INVALID_RATIO", stopping.get("max_invalid_ratio"))
+    _assign(merged, "MAX_CONSECUTIVE_CST_FAILURES", stopping.get("max_consecutive_cst_failures"))
+
+    _assign(merged, "SIMPLIFY_TOLERANCE_PX", geometry.get("simplify_tolerance_px"))
+    _assign(merged, "GEOMETRY_FRAME", geometry.get("geometry_frame"))
+    _assign(merged, "CURVE_PARAMETERIZATION_MODE", geometry.get("curve_parameterization_mode"))
+
+    _assign(merged, "PORT_CONNECTION_STEP_PX", port_connection.get("step_px"))
+    _assign(merged, "PORT_CONNECTION_TOLERANCE_PX", port_connection.get("tolerance_px"))
+    _assign(merged, "PORT_CONNECTION_MAX_SHIFT_PX", port_connection.get("max_shift_px"))
+    _assign(
+        merged,
+        "PORT_CONNECTION_FINAL_FREE_NORMAL_INWARD_PX",
+        port_connection.get("final_free_normal_inward_px"),
+    )
+    _assign(merged, "PORT_CONNECTION_FINAL_PORT_WIDTH_SCALE", port_connection.get("final_port_width_scale"))
+    return merged
+
+
+def _dict_value(payload: Dict[str, Any], key: str) -> Dict[str, Any]:
+    value = payload.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def _assign(target: Dict[str, Any], key: str, value: Any) -> None:
+    if value is not None:
+        target[key] = value
+
+
+def _assign_path(target: Dict[str, Any], key: str, value: Any) -> None:
+    if value is None:
+        return
+    path = Path(value)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    target[key] = path
 
 
 def setup_run(config: OptimizationConfig) -> RunState:
@@ -555,17 +713,30 @@ class OptimizationPipeline:
             port_summary=self.port_summary,
             curve_parameterization_mode=self.config.curve_parameterization_mode,
         )
-        self.objective_weights = ObjectiveWeights()
+        self.stage4_initial_points = collect_stage4_topology_points(
+            self.payload,
+            port_summary=self.port_summary,
+            curve_parameterization_mode=self.config.curve_parameterization_mode,
+        )
+        self.objective_weights = build_objective_weights(self.config.objective_weights)
         self.objective_profile = self._configure_objective_profile()
         self.stage_manager = StageManager(
             enabled=self.config.enable_multistage_optimization,
             total_trials=self.config.max_evaluations,
             stage1_trials=self.config.stage1_trials,
             stage3_trials=self.config.stage3_trials,
+            stage4_trials=self.config.stage4_trials,
             stage1_scale_range=self.config.stage1_scale_range,
             stage3_scale_delta=self.config.stage3_scale_delta,
+            stage4_delta_px=self.config.stage4_delta_px,
+            stage4_point_count=len(self.stage4_initial_points),
         )
         self.optimizer = self._create_optimizer_backend()
+        self.stage4_reference_payload: Optional[Dict[str, Any]] = None
+        self.stage4_reference_port_summary: Optional[Dict[str, Any]] = None
+        self.stage4_reference_inventory: Optional[PrimitiveInventory] = None
+        self.stage4_reference_record: Optional[EvaluationRecord] = None
+        self._stage3_reference_objective: Optional[float] = None
         self._cst_design_environment = None
         self._cst_project = None
         self._cst_project_path: Optional[Path] = None
@@ -617,9 +788,11 @@ class OptimizationPipeline:
             for evaluation in range(1, self.config.max_evaluations + 1):
                 if self.stage_manager.enabled:
                     stage = self.stage_manager.stage_for_evaluation(evaluation)
-                    active_variables = self.stage_manager.variables_for_stage(stage, self.variables)
+                    if stage is OptimizationStage.STAGE4_TOPOLOGY_EXPLORATION:
+                        self._ensure_stage4_reference()
+                    active_variables = self.stage_manager.variables_for_stage(stage, self.variables, evaluation=evaluation)
                     token, sampled_values = self.optimizer.ask(active_variables)
-                    values = self.stage_manager.applied_values(stage, sampled_values)
+                    values = self.stage_manager.applied_values(stage, sampled_values, evaluation=evaluation)
                     record = self.evaluate(evaluation, values, stage=stage)
                 else:
                     stage = None
@@ -720,13 +893,21 @@ class OptimizationPipeline:
         record_name = output_dir_name or f"eval_{evaluation:03d}"
         eval_dir = self.state.valid_designs_dir / record_name
         eval_dir.mkdir(parents=True, exist_ok=True)
+        base_payload = self.payload
+        base_port_summary = self.port_summary
+        base_inventory = self.inventory
+        if stage is OptimizationStage.STAGE4_TOPOLOGY_EXPLORATION:
+            self._ensure_stage4_reference()
+            base_payload = self.stage4_reference_payload or self.payload
+            base_port_summary = self.stage4_reference_port_summary or self.port_summary
+            base_inventory = self.stage4_reference_inventory or self.inventory
         mutated = mutate_geometry(
-            self.payload,
+            base_payload,
             variables,
-            self.inventory,
+            base_inventory,
             output_dir=eval_dir,
             iteration=evaluation,
-            port_summary=self.port_summary,
+            port_summary=base_port_summary,
             curve_parameterization_mode=self.config.curve_parameterization_mode,
         )
         if stage is not None:
@@ -735,11 +916,17 @@ class OptimizationPipeline:
             mutated,
             self.reference_signature,
             self.validation_config,
-            port_summary=self.port_summary,
+            port_summary=base_port_summary,
         )
         geometry_metrics = geometry_complexity_metrics(mutated, validation)
         if stage is not None:
             geometry_metrics["optimization_stage"] = stage.value
+        stage4_meta = (mutated.get("optimization_metadata") or {}).get("stage4_topology_exploration") or {}
+        if stage4_meta:
+            geometry_metrics["stage4_topology_exploration"] = stage4_meta
+            if not bool(stage4_meta.get("valid", True)):
+                validation.valid = False
+                validation.reasons.append(str(stage4_meta.get("reason", "stage4 topology point move failed")))
         deformation_meta = (mutated.get("optimization_metadata") or {}).get("feature_constrained_deformation") or {}
         manufacturability = deformation_meta.get("manufacturability_report") or {}
         if manufacturability:
@@ -811,49 +998,81 @@ class OptimizationPipeline:
                 cst_handoff_payload,
                 None,
                 self.validation_config,
-                port_summary=self.port_summary,
+                port_summary=base_port_summary,
             )
             write_json(eval_dir / "cst_handoff_validation.json", handoff_report.to_dict())
 
-        repaired_payload, cst_geometry_report = validate_and_repair_cst_geometry(
-            cst_handoff_payload,
-            output_dir=eval_dir,
-            logger=logger,
-        )
+        if stage is OptimizationStage.STAGE4_TOPOLOGY_EXPLORATION:
+            repaired_payload = cst_handoff_payload
+            cst_geometry_report = CSTGeometryValidator(
+                CSTGeometryValidationConfig(),
+                logger=logger,
+            ).validate(repaired_payload)
+            blocking_warning_markers = ("broken segment", "duplicate")
+            blocking_warnings = [
+                warning for warning in cst_geometry_report.warnings
+                if any(marker in str(warning).lower() for marker in blocking_warning_markers)
+            ]
+            if blocking_warnings:
+                cst_geometry_report.errors.extend(blocking_warnings)
+                cst_geometry_report.valid = False
+            write_json(eval_dir / "stage4_no_repair_cst_validation.json", cst_geometry_report.to_dict())
+        else:
+            repaired_payload, cst_geometry_report = validate_and_repair_cst_geometry(
+                cst_handoff_payload,
+                output_dir=eval_dir,
+                logger=logger,
+            )
         port_summary_for_eval = self.config.port_summary
         connected_port_summary_path = None
-        if self.port_summary is not None:
-            port_summary_for_connection = self._apply_stage_scale_to_port_summary(
-                self.port_summary,
-                variables,
-            )
-            connected_port_summary, port_connection_report = ensure_port_summary_connected_to_geometry(
-                repaired_payload,
-                port_summary_for_connection,
-                step_px=self.config.port_connection_step_px,
-                tolerance_px=self.config.port_connection_tolerance_px,
-                max_shift_px=self.config.port_connection_max_shift_px,
-                final_free_normal_inward_px=self.config.port_connection_final_free_normal_inward_px,
-                final_port_width_scale=self.config.port_connection_final_port_width_scale,
-            )
-            write_json(eval_dir / "port_connection_report.json", port_connection_report)
-            metadata = repaired_payload.setdefault("optimization_metadata", {})
-            metadata["port_connection"] = port_connection_report
-            if connected_port_summary is not None:
-                connected_port_summary_path = eval_dir / "port_summary_connected.json"
-                write_json(connected_port_summary_path, connected_port_summary)
+        if base_port_summary is not None:
+            if stage is OptimizationStage.STAGE4_TOPOLOGY_EXPLORATION:
+                connected_port_summary_path = eval_dir / "port_summary_stage4_frozen.json"
+                write_json(connected_port_summary_path, base_port_summary)
                 port_summary_for_eval = connected_port_summary_path
-            if not bool(port_connection_report.get("connected_after", False)):
-                cst_geometry_report.valid = False
-                cst_geometry_report.errors.append(
-                    "port is not connected to parameterized feedline after inward normal stepping"
+                metadata = repaired_payload.setdefault("optimization_metadata", {})
+                metadata["port_connection"] = {
+                    "enabled": False,
+                    "status": "frozen_for_stage4_topology_exploration",
+                    "connected_after": True,
+                    "reason": "Stage4 freezes port position and port size.",
+                }
+            else:
+                port_summary_for_connection = self._apply_stage_scale_to_port_summary(
+                    base_port_summary,
+                    variables,
                 )
+                connected_port_summary, port_connection_report = ensure_port_summary_connected_to_geometry(
+                    repaired_payload,
+                    port_summary_for_connection,
+                    step_px=self.config.port_connection_step_px,
+                    tolerance_px=self.config.port_connection_tolerance_px,
+                    max_shift_px=self.config.port_connection_max_shift_px,
+                    final_free_normal_inward_px=self.config.port_connection_final_free_normal_inward_px,
+                    final_port_width_scale=self.config.port_connection_final_port_width_scale,
+                )
+                write_json(eval_dir / "port_connection_report.json", port_connection_report)
+                metadata = repaired_payload.setdefault("optimization_metadata", {})
+                metadata["port_connection"] = port_connection_report
+                if connected_port_summary is not None:
+                    connected_port_summary_path = eval_dir / "port_summary_connected.json"
+                    write_json(connected_port_summary_path, connected_port_summary)
+                    port_summary_for_eval = connected_port_summary_path
+                if not bool(port_connection_report.get("connected_after", False)):
+                    cst_geometry_report.valid = False
+                    cst_geometry_report.errors.append(
+                        "port is not connected to parameterized feedline after inward normal stepping"
+                    )
         if stage is not None:
             metadata = repaired_payload.setdefault("optimization_metadata", {})
             metadata["cst_input_snapshot"] = {
                 "curve_parameterization_json": design_path.name,
                 "snapshot_json": "cst_input_curve_parameterization.json",
-                "source": "repaired_payload_after_cst_geometry_repair_and_port_connection",
+                "source": (
+                    "stage4_validated_payload_without_auto_repair"
+                    if stage is OptimizationStage.STAGE4_TOPOLOGY_EXPLORATION
+                    else "repaired_payload_after_cst_geometry_repair_and_port_connection"
+                ),
             }
         write_json(design_path, repaired_payload)
         if stage is not None:
@@ -1059,11 +1278,150 @@ class OptimizationPipeline:
         """Attach stage-specific loss metadata without changing objective core."""
 
         enriched = dict(objective_breakdown)
-        terms = compute_stage_objective_terms(stage, enriched)
+        terms = compute_stage_objective_terms(stage, enriched, self.config.stage_loss_weights)
         enriched["optimization_stage"] = stage.value
         enriched["stage_label"] = stage.label
         enriched["stage_objective"] = terms.to_dict()
         return enriched
+
+    def _cache_stage3_reference(self, record: EvaluationRecord) -> None:
+        """Cache the best successful Stage3 design as the Stage4 baseline."""
+
+        if record.status not in {"completed", "build_completed"}:
+            return
+        if record.objective is None or not math.isfinite(float(record.objective)):
+            return
+        if self._stage3_reference_objective is not None and float(record.objective) >= self._stage3_reference_objective:
+            return
+        design_path = Path(record.design_json)
+        if not design_path.exists():
+            return
+        try:
+            payload = load_json(design_path)
+            port_summary = self._load_record_port_summary(record)
+            _, inventory = extract_design_variables(
+                payload,
+                port_summary=port_summary,
+                curve_parameterization_mode=self.config.curve_parameterization_mode,
+            )
+        except Exception as exc:
+            self.state.logger.warning("Stage4 reference cache skipped for eval=%03d: %s", record.evaluation, exc)
+            return
+        self.stage4_reference_payload = payload
+        self.stage4_reference_port_summary = port_summary
+        self.stage4_reference_inventory = inventory
+        self.stage4_reference_record = record
+        self._stage3_reference_objective = float(record.objective)
+        points = collect_stage4_topology_points(
+            payload,
+            port_summary=port_summary,
+            curve_parameterization_mode=self.config.curve_parameterization_mode,
+        )
+        self.stage_manager.set_stage4_point_count(len(points))
+        write_json(
+            self.state.run_dir / "multistage_stage4_reference.json",
+            {
+                "source": "best_successful_stage3_record",
+                "evaluation": record.evaluation,
+                "objective": record.objective,
+                "design_json": record.design_json,
+                "port_summary": str(Path(record.design_json).parent / "port_summary_connected.json"),
+                "stage4_point_count": len(points),
+            },
+        )
+
+    def _ensure_stage4_reference(self) -> None:
+        """Prepare a non-accumulating Stage4 baseline before Stage4 starts."""
+
+        if self.stage4_reference_payload is not None:
+            return
+        fallback_record = self.state.best_record
+        if fallback_record is not None and Path(fallback_record.design_json).exists():
+            try:
+                payload = load_json(Path(fallback_record.design_json))
+                port_summary = self._load_record_port_summary(fallback_record)
+                _, inventory = extract_design_variables(
+                    payload,
+                    port_summary=port_summary,
+                    curve_parameterization_mode=self.config.curve_parameterization_mode,
+                )
+                source = "best_available_record"
+            except Exception as exc:
+                self.state.logger.warning("Stage4 best-record fallback failed: %s", exc)
+                payload = self.payload
+                port_summary = self.port_summary
+                inventory = self.inventory
+                source = "initial_payload"
+        else:
+            payload = self.payload
+            port_summary = self.port_summary
+            inventory = self.inventory
+            source = "initial_payload"
+
+        self.stage4_reference_payload = payload
+        self.stage4_reference_port_summary = port_summary
+        self.stage4_reference_inventory = inventory
+        points = collect_stage4_topology_points(
+            payload,
+            port_summary=port_summary,
+            curve_parameterization_mode=self.config.curve_parameterization_mode,
+        )
+        self.stage_manager.set_stage4_point_count(len(points))
+        write_json(
+            self.state.run_dir / "multistage_stage4_reference.json",
+            {
+                "source": source,
+                "evaluation": fallback_record.evaluation if fallback_record else None,
+                "objective": fallback_record.objective if fallback_record else None,
+                "design_json": fallback_record.design_json if fallback_record else str(self.config.parameter_json),
+                "stage4_point_count": len(points),
+            },
+        )
+
+    def _load_record_port_summary(self, record: EvaluationRecord) -> Optional[Dict[str, Any]]:
+        eval_dir = Path(record.design_json).parent
+        for name in ("port_summary_connected.json", "port_summary_stage4_frozen.json"):
+            path = eval_dir / name
+            if path.exists():
+                return load_json(path)
+        return self.port_summary
+
+    def _log_stage4_result(
+        self,
+        record: EvaluationRecord,
+        values: Dict[str, float],
+        stage_terms: Any,
+    ) -> None:
+        stage4_meta = (record.geometry_metrics or {}).get("stage4_topology_exploration") or {}
+        selected = stage4_meta.get("selected_point", f"Point_{int(values.get(STAGE4_POINT_INDEX, 0))}")
+        dx = float(stage4_meta.get("delta_x", values.get(STAGE4_DELTA_X, 0.0)))
+        dy = float(stage4_meta.get("delta_y", values.get(STAGE4_DELTA_Y, 0.0)))
+        geometry_valid = record.status != "invalid_geometry"
+        if not geometry_valid:
+            reason = record.error_message or "; ".join((record.validation or {}).get("reasons", []))
+            self.state.logger.info(
+                "%s | Trial %03d | Selected Point=%s | dx=%+.3f dy=%+.3f | "
+                "Geometry Valid=False | Reason=%s | Skip CST Simulation",
+                OptimizationStage.STAGE4_TOPOLOGY_EXPLORATION.label,
+                record.evaluation,
+                selected,
+                dx,
+                dy,
+                reason,
+            )
+            return
+        self.state.logger.info(
+            "%s | Trial %03d | Selected Point=%s | dx=%+.3f dy=%+.3f | "
+            "Geometry Valid=True | ERES=%.6f EBW=%.6f Loss=%.6f",
+            OptimizationStage.STAGE4_TOPOLOGY_EXPLORATION.label,
+            record.evaluation,
+            selected,
+            dx,
+            dy,
+            float(stage_terms.eres),
+            float(stage_terms.ebw),
+            float(stage_terms.loss),
+        )
 
     def _record_stage_result(
         self,
@@ -1086,6 +1444,11 @@ class OptimizationPipeline:
                     self.state.run_dir / "multistage_stage1_best.json",
                     self.stage_manager.stage1_best.to_dict(),
                 )
+        if self.stage_manager.enabled and stage is OptimizationStage.STAGE3_FINE_TUNING:
+            self._cache_stage3_reference(record)
+        if self.stage_manager.enabled and stage is OptimizationStage.STAGE4_TOPOLOGY_EXPLORATION:
+            self._log_stage4_result(record, values, stage_terms)
+            return
         self.state.logger.info(
             "%s | Trial %03d | scale_x=%.6f scale_y=%.6f port_scale=%.6f | ERES=%.6f EBW=%.6f Loss=%.6f",
             stage.label,
@@ -1137,7 +1500,7 @@ class OptimizationPipeline:
         cst_config.geometry_frame = self.config.geometry_frame
         cst_config.close_project = False
         cst_config.save_project = False
-        self._validate_cst_frequency_range(cst_config.f0, cst_config.f1)
+        self._apply_cst_frequency_override(cst_config)
         return cst_config
 
     def _start_cst_session(self) -> None:
@@ -1287,7 +1650,7 @@ class OptimizationPipeline:
         cst_config.port_summary_path = port_summary_path if port_summary_path is not None else self.config.port_summary
         cst_config.simplify_tolerance_px = self.config.simplify_tolerance_px
         cst_config.geometry_frame = self.config.geometry_frame
-        self._validate_cst_frequency_range(cst_config.f0, cst_config.f1)
+        self._apply_cst_frequency_override(cst_config)
         self.state.logger.info(
             "CST S11 simulation frequency range: %.6g-%.6g %s",
             cst_config.f0,
@@ -1318,11 +1681,24 @@ class OptimizationPipeline:
             cst_config = CSTParametricConfig(project_folder=eval_dir / "cst")
         cst_config.geometry_frame = self.config.geometry_frame
         cst_config.simplify_tolerance_px = self.config.simplify_tolerance_px
+        self._apply_cst_frequency_override(cst_config)
         output_svg = eval_dir / "curve_parameterization_cst_lengths.svg"
         try:
             generate_cst_length_annotated_svg(design_json, cst_config, output_path=output_svg)
         except Exception as exc:
             self.state.logger.warning("CST length overlay skipped for %s: %s", design_json, exc)
+
+    def _apply_cst_frequency_override(self, cst_config: Any) -> Any:
+        """Apply BO config frequency override to the CST builder config."""
+
+        if self.config.simulation_f0_ghz is not None:
+            cst_config.f0 = float(self.config.simulation_f0_ghz)
+        if self.config.simulation_f1_ghz is not None:
+            cst_config.f1 = float(self.config.simulation_f1_ghz)
+        if self.config.simulation_frequency_unit:
+            cst_config.frequency_unit = str(self.config.simulation_frequency_unit)
+        self._validate_cst_frequency_range(cst_config.f0, cst_config.f1)
+        return cst_config
 
     @staticmethod
     def _validate_cst_frequency_range(f0: float, f1: float) -> None:
@@ -1337,19 +1713,28 @@ class OptimizationPipeline:
         """Return the CST S11 frequency range resolved from instance JSON."""
 
         if self.config.instance_json is None:
+            f0 = float(self.config.simulation_f0_ghz) if self.config.simulation_f0_ghz is not None else 6.0
+            f1 = float(self.config.simulation_f1_ghz) if self.config.simulation_f1_ghz is not None else 14.0
+            self._validate_cst_frequency_range(f0, f1)
             return {
                 "source": "default_CSTParametricConfig",
-                "f0": 6.0,
-                "f1": 14.0,
-                "unit": "GHz",
+                "override_source": str(BAYESIAN_OPCONFIG_PATH)
+                if self.config.simulation_f0_ghz is not None or self.config.simulation_f1_ghz is not None
+                else None,
+                "f0": f0,
+                "f1": f1,
+                "unit": self.config.simulation_frequency_unit or "GHz",
             }
 
         from bayesian_optimization.simulation.parameterized_json_to_cst import load_instance_config
 
         cst_config = load_instance_config(self.config.instance_json, self.config.layer_name)
-        self._validate_cst_frequency_range(cst_config.f0, cst_config.f1)
+        self._apply_cst_frequency_override(cst_config)
         return {
             "source": str(self.config.instance_json),
+            "override_source": str(BAYESIAN_OPCONFIG_PATH)
+            if self.config.simulation_f0_ghz is not None or self.config.simulation_f1_ghz is not None
+            else None,
             "f0": float(cst_config.f0),
             "f1": float(cst_config.f1),
             "unit": cst_config.frequency_unit,
@@ -1366,6 +1751,8 @@ class OptimizationPipeline:
                 return OptunaBackend(
                     random_state=self.config.random_state,
                     max_evaluations=self.config.max_evaluations,
+                    n_startup_trials=self.config.optuna_n_startup_trials,
+                    multivariate=self.config.optuna_multivariate,
                 )
             except Exception as exc:
                 if backend == "optuna":
@@ -1373,7 +1760,11 @@ class OptimizationPipeline:
                 self.state.logger.warning("Optuna unavailable, fallback to skopt GP/EI: %s", exc)
 
         try:
-            return SkoptBackend(random_state=self.config.random_state)
+            return SkoptBackend(
+                random_state=self.config.random_state,
+                base_estimator=self.config.skopt_base_estimator,
+                acq_func=self.config.skopt_acq_func,
+            )
         except Exception as exc:
             raise ImportError(
                 "Optuna 和 scikit-optimize 都不可用。请检查 local_packages_py38 或运行 pip install -r requirements.txt。"
@@ -1487,6 +1878,7 @@ class OptimizationPipeline:
         """写入 run_metadata.json，记录输入、变量、目标和优化器配置。"""
         metadata = {
             "config": {
+                "beyesian_opconfig": str(BAYESIAN_OPCONFIG_PATH) if BAYESIAN_OPCONFIG_PATH.exists() else None,
                 "parameter_json": str(self.config.parameter_json),
                 "instance_json": str(self.config.instance_json) if self.config.instance_json else None,
                 "port_summary": str(self.config.port_summary) if self.config.port_summary else None,
@@ -1499,12 +1891,47 @@ class OptimizationPipeline:
                 "simplify_tolerance_px": self.config.simplify_tolerance_px,
                 "curve_parameterization_mode": self.config.curve_parameterization_mode,
                 "optimizer_backend": self.config.optimizer_backend,
+                "optimizer_hyperparameters": {
+                    "optuna_n_startup_trials": self.config.optuna_n_startup_trials,
+                    "optuna_multivariate": self.config.optuna_multivariate,
+                    "skopt_base_estimator": self.config.skopt_base_estimator,
+                    "skopt_acq_func": self.config.skopt_acq_func,
+                    "random_state": self.config.random_state,
+                },
                 "multistage_optimization": {
                     "enabled": self.config.enable_multistage_optimization,
                     "stage1_trials": self.config.stage1_trials,
+                    "stage2_trials": self.config.stage2_trials
+                    if self.config.stage2_trials is not None
+                    else max(
+                        0,
+                        self.config.max_evaluations
+                        - self.config.stage1_trials
+                        - self.config.stage3_trials
+                        - self.config.stage4_trials,
+                    ),
                     "stage3_trials": self.config.stage3_trials,
+                    "stage4_trials": self.config.stage4_trials,
                     "stage1_scale_range": list(self.config.stage1_scale_range),
                     "stage3_scale_delta": self.config.stage3_scale_delta,
+                    "stage4_delta_px": self.config.stage4_delta_px,
+                    "stage_loss_weights": self.config.stage_loss_weights,
+                    "stage4_policy": {
+                        "name": "Topology Exploration",
+                        "basis": "best successful Stage3 design",
+                        "variables": [STAGE4_DELTA_X, STAGE4_DELTA_Y],
+                        "selected_point_policy": "cycle one eligible non-port contour point per trial",
+                        "frozen": [
+                            GLOBAL_SCALE_X,
+                            GLOBAL_SCALE_Y,
+                            PORT_WIDTH_SCALE,
+                            "port_width",
+                            "feedline_width",
+                            "feedline_position",
+                            "port_position",
+                        ],
+                        "auto_repair": False,
+                    },
                 },
                 "storage_policy": {
                     "run_directory": "always create a timestamped unique run folder",
@@ -1996,9 +2423,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--enable-multistage-optimization", action="store_true")
     parser.add_argument("--stage1-trials", type=int, default=50)
     parser.add_argument("--stage3-trials", type=int, default=20)
+    parser.add_argument("--stage4-trials", type=int, default=20)
     parser.add_argument("--stage1-scale-min", type=float, default=0.80)
     parser.add_argument("--stage1-scale-max", type=float, default=1.20)
     parser.add_argument("--stage3-scale-delta", type=float, default=0.05)
+    parser.add_argument("--stage4-delta-px", type=float, default=7.0)
     return parser.parse_args()
 
 
@@ -2027,13 +2456,16 @@ def build_config(args: argparse.Namespace) -> OptimizationConfig:
         enable_multistage_optimization=bool(args.enable_multistage_optimization),
         stage1_trials=args.stage1_trials,
         stage3_trials=args.stage3_trials,
+        stage4_trials=args.stage4_trials,
         stage1_scale_range=(args.stage1_scale_min, args.stage1_scale_max),
         stage3_scale_delta=args.stage3_scale_delta,
+        stage4_delta_px=args.stage4_delta_px,
     )
 
 
 def build_config_from_editor_config(editor_config: Dict[str, Any]) -> OptimizationConfig:
     """把 EDITOR_RUN_CONFIG 转换为 OptimizationConfig，方便 IDE 直接运行。"""
+    editor_config = merge_editor_config_with_beyesian_opconfig(editor_config)
     base_run_dir = Path(editor_config["BASE_RUN_DIR"])
     parameter_json = base_run_dir / "02_parameterization" / "curve_parameterization.json"
     instance_json = Path(editor_config.get("INSTANCE_JSON_PATH") or (base_run_dir / "prepared_instance.json"))
@@ -2049,6 +2481,17 @@ def build_config_from_editor_config(editor_config: Dict[str, Any]) -> Optimizati
         port_summary=port_summary,
         layer_name=str(editor_config["LAYER_NAME"]),
         max_evaluations=int(editor_config["MAX_EVALUATIONS"]),
+        simulation_f0_ghz=(
+            float(editor_config["SIMULATION_F0_GHZ"])
+            if editor_config.get("SIMULATION_F0_GHZ") is not None
+            else None
+        ),
+        simulation_f1_ghz=(
+            float(editor_config["SIMULATION_F1_GHZ"])
+            if editor_config.get("SIMULATION_F1_GHZ") is not None
+            else None
+        ),
+        simulation_frequency_unit=str(editor_config.get("SIMULATION_FREQUENCY_UNIT", "GHz")),
         target_frequency_ghz=float(editor_config["TARGET_FREQUENCY_GHZ"]),
         target_s11_db=float(editor_config["TARGET_S11_DB"]),
         convergence_threshold=float(editor_config["CONVERGENCE_THRESHOLD"]),
@@ -2061,12 +2504,57 @@ def build_config_from_editor_config(editor_config: Dict[str, Any]) -> Optimizati
         curve_parameterization_mode=str(editor_config.get("CURVE_PARAMETERIZATION_MODE", DEFAULT_CURVE_PARAMETERIZATION_MODE)),
         random_state=int(editor_config["RANDOM_STATE"]),
         optimizer_backend=str(editor_config["OPTIMIZER_BACKEND"]),
+        optuna_n_startup_trials=(
+            int(editor_config["OPTUNA_N_STARTUP_TRIALS"])
+            if editor_config.get("OPTUNA_N_STARTUP_TRIALS") is not None
+            else None
+        ),
+        optuna_multivariate=bool(editor_config.get("OPTUNA_MULTIVARIATE", False)),
+        skopt_base_estimator=str(editor_config.get("SKOPT_BASE_ESTIMATOR", "GP")),
+        skopt_acq_func=str(editor_config.get("SKOPT_ACQ_FUNC", "EI")),
+        objective_weights=dict(editor_config.get("OBJECTIVE_WEIGHTS") or {}),
+        stage_loss_weights=dict(editor_config.get("STAGE_LOSS_WEIGHTS") or {}),
         enable_multistage_optimization=bool(editor_config.get("ENABLE_MULTISTAGE_OPTIMIZATION", False)),
         stage1_trials=int(editor_config.get("STAGE1_TRIALS", 50)),
+        stage2_trials=(
+            int(editor_config["STAGE2_TRIALS"])
+            if editor_config.get("STAGE2_TRIALS") is not None
+            else None
+        ),
         stage3_trials=int(editor_config.get("STAGE3_TRIALS", 20)),
+        stage4_trials=int(editor_config.get("STAGE4_TRIALS", 20)),
         stage1_scale_range=tuple(float(value) for value in editor_config.get("STAGE1_SCALE_RANGE", (0.80, 1.20))),
         stage3_scale_delta=float(editor_config.get("STAGE3_SCALE_DELTA", 0.05)),
+        stage4_delta_px=float(editor_config.get("STAGE4_DELTA_PX", 7.0)),
+        port_connection_step_px=float(editor_config.get("PORT_CONNECTION_STEP_PX", 0.2)),
+        port_connection_tolerance_px=float(editor_config.get("PORT_CONNECTION_TOLERANCE_PX", 0.15)),
+        port_connection_max_shift_px=float(editor_config.get("PORT_CONNECTION_MAX_SHIFT_PX", 120.0)),
+        port_connection_final_free_normal_inward_px=float(
+            editor_config.get("PORT_CONNECTION_FINAL_FREE_NORMAL_INWARD_PX", 8.0)
+        ),
+        port_connection_final_port_width_scale=float(
+            editor_config.get("PORT_CONNECTION_FINAL_PORT_WIDTH_SCALE", 1.30)
+        ),
     )
+
+
+def _validate_stage_loss_weights(stage_loss_weights: Dict[str, Dict[str, float]]) -> None:
+    if not stage_loss_weights:
+        return
+    allowed_stage_keys = {"stage1", "stage2", "stage3", "stage4"}
+    allowed_weight_keys = {"eres", "ebw", "full_objective"}
+    for stage_key, weights in stage_loss_weights.items():
+        if str(stage_key).lower() not in allowed_stage_keys:
+            raise ValueError(f"unknown stage loss weight section: {stage_key}")
+        if not isinstance(weights, dict):
+            raise ValueError(f"stage loss weights for {stage_key} must be an object")
+        for weight_key, value in weights.items():
+            normalized_key = str(weight_key).lower()
+            if normalized_key not in allowed_weight_keys:
+                raise ValueError(f"unknown stage loss weight key {stage_key}.{weight_key}")
+            number = float(value)
+            if not math.isfinite(number) or number < 0.0:
+                raise ValueError(f"stage loss weight {stage_key}.{weight_key} must be finite and >= 0")
 
 
 def validate_config(config: OptimizationConfig) -> None:
@@ -2081,21 +2569,47 @@ def validate_config(config: OptimizationConfig) -> None:
         raise ValueError("max_evaluations must be > 0")
     if config.max_evaluations > MAX_ALLOWED_EVALUATIONS:
         raise ValueError(f"max_evaluations must be <= {MAX_ALLOWED_EVALUATIONS}")
+    if config.simulation_f0_ghz is not None or config.simulation_f1_ghz is not None:
+        if config.simulation_f0_ghz is None or config.simulation_f1_ghz is None:
+            raise ValueError("simulation_f0_ghz and simulation_f1_ghz must be configured together")
+        OptimizationPipeline._validate_cst_frequency_range(
+            float(config.simulation_f0_ghz),
+            float(config.simulation_f1_ghz),
+        )
     if config.no_improvement_patience <= 0:
         raise ValueError("no_improvement_patience must be > 0")
     if not 0.0 < config.max_invalid_ratio <= 1.0:
         raise ValueError("max_invalid_ratio must be in (0, 1]")
     if config.optimizer_backend not in {"auto", "optuna", "skopt"}:
         raise ValueError("optimizer_backend must be one of: auto, optuna, skopt")
+    if config.optuna_n_startup_trials is not None and config.optuna_n_startup_trials <= 0:
+        raise ValueError("optuna_n_startup_trials must be > 0 when configured")
     if config.curve_parameterization_mode not in {"linearized", "native"}:
         raise ValueError("curve_parameterization_mode must be one of: linearized, native")
+    _validate_stage_loss_weights(config.stage_loss_weights)
     if config.enable_multistage_optimization:
         if config.stage1_trials <= 0:
             raise ValueError("stage1_trials must be > 0 when multistage optimization is enabled")
+        if config.stage2_trials is not None and config.stage2_trials < 0:
+            raise ValueError("stage2_trials must be >= 0 when multistage optimization is enabled")
         if config.stage3_trials <= 0:
             raise ValueError("stage3_trials must be > 0 when multistage optimization is enabled")
-        if config.stage1_trials + config.stage3_trials >= config.max_evaluations:
-            raise ValueError("stage1_trials + stage3_trials must be < max_evaluations")
+        if config.stage4_trials < 0:
+            raise ValueError("stage4_trials must be >= 0 when multistage optimization is enabled")
+        if config.stage2_trials is not None:
+            configured_total = (
+                config.stage1_trials
+                + config.stage2_trials
+                + config.stage3_trials
+                + config.stage4_trials
+            )
+            if configured_total != config.max_evaluations:
+                raise ValueError(
+                    "stage1_trials + stage2_trials + stage3_trials + stage4_trials "
+                    "must equal max_evaluations when stage2_trials is configured"
+                )
+        elif config.stage1_trials + config.stage3_trials + config.stage4_trials >= config.max_evaluations:
+            raise ValueError("stage1_trials + stage3_trials + stage4_trials must be < max_evaluations")
         if len(config.stage1_scale_range) != 2:
             raise ValueError("stage1_scale_range must contain exactly two values")
         scale_min, scale_max = [float(value) for value in config.stage1_scale_range]
@@ -2103,6 +2617,8 @@ def validate_config(config: OptimizationConfig) -> None:
             raise ValueError("stage1_scale_range must be positive and increasing")
         if not 0.0 < config.stage3_scale_delta < 1.0:
             raise ValueError("stage3_scale_delta must be in (0, 1)")
+        if config.stage4_trials > 0 and config.stage4_delta_px <= 0.0:
+            raise ValueError("stage4_delta_px must be > 0 when stage4_trials > 0")
 
 
 def main() -> None:
@@ -2127,6 +2643,12 @@ def run_from_editor_config() -> None:
     print(f"[OptimizationPipeline] build_only:      {not config.run_solver}")
     print(f"[OptimizationPipeline] optimizer:       {config.optimizer_backend}")
     print(f"[OptimizationPipeline] multistage:      {config.enable_multistage_optimization}")
+    print(f"[OptimizationPipeline] opconfig:        {BAYESIAN_OPCONFIG_PATH if BAYESIAN_OPCONFIG_PATH.exists() else None}")
+    if config.simulation_f0_ghz is not None and config.simulation_f1_ghz is not None:
+        print(
+            "[OptimizationPipeline] CST freq:        "
+            f"{config.simulation_f0_ghz}-{config.simulation_f1_ghz} {config.simulation_frequency_unit}"
+        )
 
     ###关键点提取在OptimizationPipeline的初始化中
     pipeline = OptimizationPipeline(config)
@@ -2135,7 +2657,8 @@ def run_from_editor_config() -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 1 and bool(EDITOR_RUN_CONFIG.get("RUN_WITH_EDITOR_CONFIG", False)):
+    effective_editor_config = merge_editor_config_with_beyesian_opconfig(EDITOR_RUN_CONFIG)
+    if len(sys.argv) == 1 and bool(effective_editor_config.get("RUN_WITH_EDITOR_CONFIG", False)):
         run_from_editor_config()
     else:
         main()

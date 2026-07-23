@@ -56,6 +56,16 @@ def generate_primitive_variables(
     primitives = list(analysis.get("primitives", []) or [])
     scale = estimate_design_scale(analysis)
 
+    holes = [
+        primitive
+        for primitive in primitives
+        if primitive.get("type") == "HOLE" or primitive.get("role") == "SLOT"
+    ]
+    for primitive in holes:
+        variables.extend(generate_hole_translation_variables(primitive, scale))
+        if reached_dimension_limit(variables, max_dimensions):
+            return variables[:max_dimensions]
+
     lines = [
         primitive
         for primitive in primitives
@@ -79,6 +89,61 @@ def generate_primitive_variables(
     if max_dimensions is not None:
         return variables[:max_dimensions]
     return variables
+
+
+def generate_hole_translation_variables(primitive: Dict[str, Any], scale: float) -> List[PrimitiveDesignVariable]:
+    """Generate translation and size variables for a slot represented as a hole."""
+
+    primitive_id = str(primitive.get("primitive_id"))
+    prefix = safe_name(primitive)
+    translate_limit = max(0.25, min(3.0, 0.04 * scale))
+    bbox = primitive.get("bbox") or [0.0, 0.0, 1.0, 1.0]
+    width = abs(float(bbox[2]) - float(bbox[0])) if len(bbox) >= 4 else max(1.0, 0.04 * scale)
+    height = abs(float(bbox[3]) - float(bbox[1])) if len(bbox) >= 4 else max(1.0, 0.02 * scale)
+    width_limit = max(0.10, min(3.0, 0.50 * width))
+    height_limit = max(0.10, min(3.0, 0.50 * height))
+    return [
+        PrimitiveDesignVariable(
+            name=f"{prefix}_slot_translate_x",
+            lower=-translate_limit,
+            upper=translate_limit,
+            default=0.0,
+            description="Rigid slot translation along x; slot width/height remain unchanged.",
+            primitive_id=primitive_id,
+            variable_type="hole_translate_x",
+            target_role="SLOT",
+        ),
+        PrimitiveDesignVariable(
+            name=f"{prefix}_slot_translate_y",
+            lower=-translate_limit,
+            upper=translate_limit,
+            default=0.0,
+            description="Rigid slot translation along y; slot width/height remain unchanged.",
+            primitive_id=primitive_id,
+            variable_type="hole_translate_y",
+            target_role="SLOT",
+        ),
+        PrimitiveDesignVariable(
+            name=f"{prefix}_slot_width_delta",
+            lower=-width_limit,
+            upper=width_limit,
+            default=0.0,
+            description="Symmetric slot width change along x; slot center remains fixed.",
+            primitive_id=primitive_id,
+            variable_type="hole_resize_width",
+            target_role="SLOT",
+        ),
+        PrimitiveDesignVariable(
+            name=f"{prefix}_slot_height_delta",
+            lower=-height_limit,
+            upper=height_limit,
+            default=0.0,
+            description="Symmetric slot height change along y; slot center remains fixed.",
+            primitive_id=primitive_id,
+            variable_type="hole_resize_height",
+            target_role="SLOT",
+        ),
+    ]
 
 
 def reached_dimension_limit(

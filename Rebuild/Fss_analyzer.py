@@ -7,6 +7,13 @@ import re
 from PIL import Image
 import base64
 
+
+def normalize_chat_completions_url(api_url):
+    clean = str(api_url or "").strip().rstrip("/")
+    if clean.endswith("/chat/completions"):
+        return clean
+    return clean + "/chat/completions"
+
 try:
     with open("config.json", "r", encoding="utf-8") as f:
         config_data = json.load(f)
@@ -22,6 +29,7 @@ else:
     try:
         API_URL = config_data["agent_api"]["API_URL"]
         API_KEY = config_data["agent_api"]["API_KEY"]
+        MODEL_NAME = config_data["agent_api"].get("MODEL_NAME", "openai/gpt-5")
         if not bool(API_URL):
             API_URL = input("请输入API_URL")
         if not bool(API_KEY):
@@ -29,6 +37,8 @@ else:
         print(f"当前API_URL为：{API_URL}")
         config_data["agent_api"]["API_URL"] = API_URL
         config_data["agent_api"]["API_KEY"] = API_KEY
+        config_data["agent_api"]["MODEL_NAME"] = MODEL_NAME
+        API_URL = normalize_chat_completions_url(API_URL)
     except json.JSONDecodeError:
         print("错误：JSON格式无效（可能有语法错误）")
     else:
@@ -68,7 +78,7 @@ def call_aliyun_api(prompt, image_data=None, max_tokens=4000, temperature=0.1):
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://example.com",
-        "X-Title": "FSS-Complete-Analysis-Tool",
+        "X-OpenRouter-Title": "FSS-Complete-Analysis-Tool",
     }
 
     messages = [{"role": "user", "content": []}]
@@ -93,7 +103,7 @@ def call_aliyun_api(prompt, image_data=None, max_tokens=4000, temperature=0.1):
     # }
 
     data = {
-        "model": "qwen-vl-plus",  # 使用合适的阿里云视觉语言模型
+        "model": MODEL_NAME,
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
@@ -443,3 +453,4 @@ if __name__ == "__main__":
     print(f"\n2. 颜色-材料映射 (col_mats):\n{json.dumps(col_mats, indent=2, ensure_ascii=False)}")
     # print(f"\n3. 颜色-组件映射 (col_comps):\n{json.dumps(col_comps, indent=2, ensure_ascii=False)}")
     print(f"\n4. FSS周期尺寸 (fss_size):\n{json.dumps(fss_size, indent=2, ensure_ascii=False)}")
+
