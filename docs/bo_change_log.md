@@ -1,5 +1,77 @@
 # BO Change Log
 
+## 2026-07-11 00:00:00 +08:00
+
+### Modified Files
+
+- `beyesian_opconfig.json`
+- `bayesian_optimization/pipelines/optimization_pipeline.py`
+- `bayesian_optimization/optimization/multistage.py`
+- `docs/bo_change_log.md`
+- `bayesian_optimization/docs/bo_change_log.md`
+
+### Summary
+
+Added a root-level `beyesian_opconfig.json` file that centralizes important
+Bayesian optimization settings: CST S11 frequency range, stage trial counts,
+stage-specific loss weights, full objective weights, optimizer hyperparameters,
+stopping criteria, geometry settings, and port-connection parameters.
+
+The editor-run pipeline now loads this JSON and uses it to override the legacy
+`EDITOR_RUN_CONFIG`. The configured S11 simulation range is applied directly to
+the CST builder config, so `simulation.f0 = 9.4` and `simulation.f1 = 10.8`
+drive the actual CST run instead of only metadata.
+
+Stage objective weights are now configurable. Stage1/Stage2 can override
+`ERES` and `EBW`, while Stage3/Stage4 can scale the full objective. Optuna
+`n_startup_trials` and `multivariate`, plus skopt `base_estimator` and
+`acq_func`, are also configurable.
+
+## 2026-07-09 00:00:00 +08:00
+
+### Modified Files
+
+- `bayesian_optimization/optimization/multistage.py`
+- `bayesian_optimization/geometry/primitive_mutator.py`
+- `bayesian_optimization/pipelines/optimization_pipeline.py`
+- `docs/bo_change_log.md`
+- `bayesian_optimization/docs/bo_change_log.md`
+
+### Reason
+
+The existing Stage1-Stage3 flow can converge to a good local solution but may
+still miss alternative current paths. Stage4 was added as a bounded local
+escape phase after fine tuning, keeping electrical scale and port/feedline
+conditions fixed while probing one conductor contour point per trial.
+
+### Algorithm Changes
+
+- Added `STAGE4_TOPOLOGY_EXPLORATION` to `OptimizationStage` and extended
+  `StageManager` with `stage4_trials`, `stage4_delta_px`, and cyclic selected
+  point scheduling.
+- Stage4 uses only `stage4_delta_x` and `stage4_delta_y` in the range
+  `[-stage4_delta_px, +stage4_delta_px]`. The selected point index is injected
+  by the stage manager instead of being optimized by Optuna.
+- Stage4 starts from the best successful Stage3 payload and applies each trial
+  as a non-cumulative single-point move. If no Stage3 reference is available,
+  it falls back to the current best record or the initial payload.
+- Stage4 freezes `global_scale_x`, `global_scale_y`, port size, port position,
+  feedline width, feedline position, and port connection adjustment.
+- Stage4 disables automatic CST geometry repair. Invalid geometry, duplicate
+  points, broken segments, and failed validation return the invalid-geometry
+  penalty without CST build/simulation.
+- Stage4 keeps the full Stage3 objective terms and writes explicit logs for the
+  selected point, move vector, geometry validity, ERES, EBW, and loss.
+
+### Compatibility
+
+- Stage4 is active only when multi-stage optimization is enabled and
+  `stage4_trials > 0`.
+- Set `STAGE4_TRIALS = 0` or `--stage4-trials 0` to keep the earlier
+  three-stage behavior.
+- Existing CST modeling, parameterization, S11 parsing, and objective framework
+  interfaces remain unchanged.
+
 ## 2026-06-18 00:00:00 +08:00
 
 ### Modified Files
